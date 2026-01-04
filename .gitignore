@@ -104,6 +104,9 @@ run/wandb/
 *.yaml
 *.yml
 *.wandb
+*.swp
+.last_run_code
+.lastruncode
 
 # Model checkpoints
 run/models/
