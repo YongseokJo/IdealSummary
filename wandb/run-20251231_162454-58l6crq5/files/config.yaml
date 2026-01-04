@@ -1,0 +1,222 @@
+_wandb:
+    value:
+        cli_version: 0.23.1
+        e:
+            k38w9cpwhpcxj7pr183nscg338ywmprm:
+                args:
+                    - --h5-path
+                    - data/camels_LH.hdf5
+                    - --snap
+                    - "90"
+                    - --param-keys
+                    - "0"
+                    - "1"
+                    - "2"
+                    - "3"
+                    - "4"
+                    - "5"
+                    - --n-summaries
+                    - "8"
+                    - --max-depth
+                    - "5"
+                    - --n-generations
+                    - "50"
+                    - --mlp-epochs
+                    - "50"
+                    - --population-size
+                    - "50"
+                    - --complexity-weight
+                    - "0.01"
+                    - --normalize-input
+                    - log_std
+                    - --normalize-output
+                    - minmax
+                    - --log-interval
+                    - "5"
+                    - --wandb
+                    - --wandb-project
+                    - set-dsr
+                    - --wandb-run-name
+                    - dsr_test_20251231_162443
+                    - --save-path
+                    - run/data/models/set_dsr/
+                    - --plot-path
+                    - run/data/models/plots/set_dsr/
+                codePath: src/train_dsr.py
+                codePathLocal: src/train_dsr.py
+                cpu_count: 64
+                cpu_count_logical: 64
+                cudaVersion: "12.8"
+                disk:
+                    /:
+                        total: "135087362048"
+                        used: "8521691136"
+                email: g.kerex@gmail.com
+                executable: /u/gkerex/pyenv/torch/bin/python
+                gpu: NVIDIA A100-SXM4-40GB
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Ampere
+                      cudaCores: 6912
+                      memoryTotal: "42949672960"
+                      name: NVIDIA A100-SXM4-40GB
+                      uuid: GPU-f6b80dae-8c24-7b1d-11b5-ff009061ca73
+                host: gpua055.delta.ncsa.illinois.edu
+                memory:
+                    total: "270174724096"
+                os: Linux-5.14.0-427.91.1.el9_4.x86_64-x86_64-with-glibc2.34
+                program: /u/gkerex/projects/IdealSummary/src/train_dsr.py
+                python: CPython 3.12.1
+                root: /u/gkerex/projects/IdealSummary
+                slurm:
+                    cluster_name: delta
+                    conf: /var/spool/slurmd/conf-cache/slurm.conf
+                    cpus_on_node: "6"
+                    cpus_per_task: "6"
+                    gpus_on_node: "1"
+                    gpus_per_node: "1"
+                    gtids: "0"
+                    job_account: bfpt-delta-gpu
+                    job_cpus_per_node: "6"
+                    job_end_time: "1767234277"
+                    job_gid: "202"
+                    job_gpus: "1"
+                    job_id: "15038612"
+                    job_name: IS_dsr
+                    job_nodelist: gpua055
+                    job_num_nodes: "1"
+                    job_partition: gpuA100x4
+                    job_qos: bfpt-delta-gpu
+                    job_start_time: "1767219877"
+                    job_uid: "90166"
+                    job_user: gkerex
+                    jobid: "15038612"
+                    localid: "0"
+                    mem_per_node: "32768"
+                    mpi_type: cray_shasta
+                    nnodes: "1"
+                    nodeid: "0"
+                    nodelist: gpua055
+                    nprocs: "1"
+                    ntasks: "1"
+                    ntasks_per_node: "1"
+                    oom_kill_step: "0"
+                    prio_process: "0"
+                    procid: "0"
+                    submit_dir: /u/gkerex/projects/IdealSummary/run
+                    submit_host: dt-login03.delta.ncsa.illinois.edu
+                    task_pid: "2566092"
+                    tasks_per_node: "1"
+                    topology_addr: ss00.ss07.gpua055
+                    topology_addr_pattern: switch.switch.node
+                    tres_bind: gres/gpu:none
+                    tres_per_task: cpu=6
+                startedAt: "2025-12-31T22:24:54.216594Z"
+                writerId: k38w9cpwhpcxj7pr183nscg338ywmprm
+        m: []
+        python_version: 3.12.1
+        t:
+            "1":
+                - 1
+            "2":
+                - 1
+            "3":
+                - 2
+                - 13
+                - 16
+            "4": 3.12.1
+            "5": 0.23.1
+            "12": 0.23.1
+            "13": linux-x86_64
+batch:
+    value: 32
+complexity_weight:
+    value: 0.01
+const_opt_lr:
+    value: 0.1
+const_opt_steps:
+    value: 10
+curriculum_schedule:
+    value: 0:1,30:2,60:3
+device:
+    value: cuda
+h5_path:
+    value: data/camels_LH.hdf5
+input_mean:
+    value: 2.6878628730773926
+input_std:
+    value: 6.628475666046143
+log_interval:
+    value: 5
+lr:
+    value: 0.001
+max_depth:
+    value: 5
+mlp_epochs:
+    value: 50
+mlp_hidden:
+    value:
+        - 64
+        - 64
+n_generations:
+    value: 50
+n_summaries:
+    value: 8
+normalize_input:
+    value: log_std
+normalize_output:
+    value: minmax
+param_keys:
+    value:
+        - Omega_m
+        - sigma_8
+        - A_SN1
+        - A_AGN1
+        - A_SN2
+        - A_AGN2
+plot_path:
+    value: run/data/models/plots/set_dsr/
+population_size:
+    value: 50
+rl_hidden_size:
+    value: 128
+rl_lr:
+    value: 0.001
+rl_samples:
+    value: 10
+save_path:
+    value: run/data/models/set_dsr/
+seed:
+    value: 42
+snap:
+    value: 90
+test_frac:
+    value: 0.1
+train_frac:
+    value: 0.8
+use_constant_optimization:
+    value: true
+use_rl_search:
+    value: false
+use_subtree_mutation:
+    value: true
+use_sympy_simplify:
+    value: true
+val_frac:
+    value: 0.1
+wandb:
+    value: true
+wandb_entity:
+    value: null
+wandb_project:
+    value: set-dsr
+wandb_run_name:
+    value: dsr_test_20251231_162443
+wandb_save_model:
+    value: false
+y_max:
+    value:
+        - 3.994460105895996
+y_min:
+    value:
+        - 0.10019999742507935

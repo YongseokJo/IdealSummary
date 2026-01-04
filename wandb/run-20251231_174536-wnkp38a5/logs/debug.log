@@ -1,0 +1,25 @@
+2025-12-31 17:45:36,747 INFO    MainThread:1547185 [wandb_setup.py:_flush():80] Current SDK version is 0.23.1
+2025-12-31 17:45:36,747 INFO    MainThread:1547185 [wandb_setup.py:_flush():80] Configure stats pid to 1547185
+2025-12-31 17:45:36,747 INFO    MainThread:1547185 [wandb_setup.py:_flush():80] Loading settings from /u/gkerex/.config/wandb/settings
+2025-12-31 17:45:36,747 INFO    MainThread:1547185 [wandb_setup.py:_flush():80] Loading settings from /u/gkerex/projects/IdealSummary/wandb/settings
+2025-12-31 17:45:36,747 INFO    MainThread:1547185 [wandb_setup.py:_flush():80] Loading settings from environment variables
+2025-12-31 17:45:36,747 INFO    MainThread:1547185 [wandb_init.py:setup_run_log_directory():714] Logging user logs to /u/gkerex/projects/IdealSummary/wandb/run-20251231_174536-wnkp38a5/logs/debug.log
+2025-12-31 17:45:36,747 INFO    MainThread:1547185 [wandb_init.py:setup_run_log_directory():715] Logging internal logs to /u/gkerex/projects/IdealSummary/wandb/run-20251231_174536-wnkp38a5/logs/debug-internal.log
+2025-12-31 17:45:36,747 INFO    MainThread:1547185 [wandb_init.py:init():841] calling init triggers
+2025-12-31 17:45:36,747 INFO    MainThread:1547185 [wandb_init.py:init():846] wandb.init called with sweep_config: {}
+config: {'h5_path': 'data/camels_LH.hdf5', 'snap': 90, 'param_keys': ['Omega_m', 'sigma_8', 'A_SN1', 'A_AGN1', 'A_SN2', 'A_AGN2'], 'train_frac': 0.8, 'val_frac': 0.1, 'test_frac': 0.1, 'batch': 32, 'normalize_input': 'log_std', 'normalize_output': 'minmax', 'n_summaries': 12, 'mlp_hidden': [64, 64], 'max_depth': 6, 'operator_scope': 'simple', 'n_generations': 300, 'mlp_epochs': 200, 'population_size': 200, 'complexity_weight': 0.005, 'lr': 0.001, 'log_interval': 10, 'curriculum_schedule': '0:1,30:2,60:3', 'save_path': 'run/data/models/set_dsr/', 'plot_path': 'run/data/models/plots/set_dsr/', 'wandb': True, 'wandb_project': 'set-dsr', 'wandb_entity': None, 'wandb_run_name': 'dsr_simple_retrain', 'wandb_save_model': False, 'use_subtree_mutation': True, 'use_constant_optimization': True, 'const_opt_steps': 10, 'const_opt_lr': 0.1, 'mlp_retrain_interval': 10, 'mlp_retrain_epochs': 20, 'use_rl_search': False, 'rl_samples': 10, 'rl_hidden_size': 128, 'rl_lr': 0.001, 'use_sympy_simplify': True, 'use_learnable_constants': True, 'seed': 42, 'device': 'cuda', '_wandb': {}}
+2025-12-31 17:45:36,747 INFO    MainThread:1547185 [wandb_init.py:init():889] starting backend
+2025-12-31 17:45:37,700 INFO    MainThread:1547185 [wandb_init.py:init():892] sending inform_init request
+2025-12-31 17:45:37,708 INFO    MainThread:1547185 [wandb_init.py:init():900] backend started and connected
+2025-12-31 17:45:37,762 INFO    MainThread:1547185 [wandb_init.py:init():970] updated telemetry
+2025-12-31 17:45:37,763 INFO    MainThread:1547185 [wandb_init.py:init():994] communicating run to backend with 90.0 second timeout
+2025-12-31 17:45:38,139 INFO    MainThread:1547185 [wandb_init.py:init():1041] starting run threads in backend
+2025-12-31 17:45:38,588 INFO    MainThread:1547185 [wandb_run.py:_console_start():2521] atexit reg
+2025-12-31 17:45:38,588 INFO    MainThread:1547185 [wandb_run.py:_redirect():2369] redirect: wrap_raw
+2025-12-31 17:45:38,588 INFO    MainThread:1547185 [wandb_run.py:_redirect():2438] Wrapping output streams.
+2025-12-31 17:45:38,588 INFO    MainThread:1547185 [wandb_run.py:_redirect():2461] Redirects installed.
+2025-12-31 17:45:38,596 INFO    MainThread:1547185 [wandb_init.py:init():1081] run started, returning control to user process
+2025-12-31 17:45:38,597 INFO    MainThread:1547185 [wandb_run.py:_config_callback():1396] config_cb None None {'input_mean': 2.6878628730773926, 'input_std': 6.628475666046143}
+2025-12-31 17:45:38,597 INFO    MainThread:1547185 [wandb_run.py:_config_callback():1396] config_cb None None {'y_min': [0.10019999742507935], 'y_max': [3.994460105895996]}
+2025-12-31 21:15:08,460 INFO    wandb-AsyncioManager-main:1547185 [service_client.py:_forward_responses():80] Reached EOF.
+2025-12-31 21:15:08,460 INFO    wandb-AsyncioManager-main:1547185 [mailbox.py:close():137] Closing mailbox, abandoning 1 handles.

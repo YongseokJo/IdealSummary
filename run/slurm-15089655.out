@@ -1,0 +1,96 @@
+Python 3.12.1
+/u/gkerex/pyenv/torch/bin/python
+Job starting on gpua054.delta.ncsa.illinois.edu
+Using device: cuda
+Loading data from data/camels_LH.hdf5...
+Split sizes -> train: 800, val: 100, test: 100
+Input dim: 1, Target dim: 6
+Parameters: ['Omega_m', 'sigma_8', 'A_SN1', 'A_AGN1', 'A_SN2', 'A_AGN2']
+Input stats: mean=2.6878628730773926, std=6.628475666046143
+Output stats: min=[0.1002], max=[3.99446]
+
+Operator scope: intermediate
+
+Initial model:
+============================================================
+Set-DSR Model Summary
+============================================================
+Number of summaries (K): 12
+Total complexity: 89.00
+------------------------------------------------------------
+s_0: (identity_s(SUM((m * logM))) + SUM(abs((square(identity(logM)) * (logM - (logM - logM))))))
+     complexity: 9.00, depth: 7
+s_1: WSUM((logM * (m * m)))
+     complexity: 4.00, depth: 4
+s_2: square_s((0.6451 * identity_s(identity_s(WMEAN((logM - m))))))
+     complexity: 5.50, depth: 7
+s_3: WSUM(((((square(logM) + (logM + logM)) * (logM - (m * logM))) * ((square(logM) * m) - ((m - logM) - (m + logM)))) * (logM + (square(1.9845) - abs((logM + m))))))
+     complexity: 21.50, depth: 7
+s_4: square_s(WMEAN(logM))
+     complexity: 3.00, depth: 3
+s_5: square_s(identity_s((square_s(identity_s(MEAN(logM))) + (1.7164 - square_s(MEAN(logM))))))
+     complexity: 7.50, depth: 7
+s_6: -0.0560
+     complexity: 0.50, depth: 1
+s_7: 1.0424
+     complexity: 0.50, depth: 1
+s_8: identity_s((WMEAN(((m * 0.6867) * 1.5985)) * (WSUM(logM) + (0.5244 + SUM((logM + m))))))
+     complexity: 12.50, depth: 7
+s_9: ((square_s(WMEAN((m + -0.3556))) * identity_s((-0.3895 * SUM(logM)))) + ((((0.6086 * (MEAN(logM) + WMEAN(logM))) + identity_s(SUM(m))) - WMEAN(m)) + WSUM(logM)))
+     complexity: 22.50, depth: 8
+s_10: (-0.7456 * -0.0928)
+     complexity: 2.00, depth: 2
+s_11: identity_s(0.0313)
+     complexity: 0.50, depth: 2
+============================================================
+
+Using advanced GP evolver (subtree_mutation=True, const_opt=True)
+
+============================================================
+Phase 1: Evolutionary Search (GP)
+============================================================
+
+[Gen 0] Advancing curriculum to level 1
+[Gen    0] fitness=nan, val_mse=1.7501e+08, val_r2=-4946228405.2992, complexity=52.50
+[Gen   10] fitness=nan, val_mse=8.0709e-02, val_r2=-1.2811, complexity=137.00
+[Gen   20] fitness=nan, val_mse=2.1412e+13, val_r2=-605168938770406.6250, complexity=145.50
+
+[Gen 30] Advancing curriculum to level 2
+[Gen   30] fitness=nan, val_mse=4.7381e+28, val_r2=-1339134157610886385170898747392.0000, complexity=122.00
+[Gen   40] fitness=nan, val_mse=3.8108e-02, val_r2=-0.0771, complexity=146.00
+[Gen   50] fitness=nan, val_mse=2.0730e+06, val_r2=-58590112.0279, complexity=141.00
+
+[Gen 60] Advancing curriculum to level 3
+[Gen   60] fitness=nan, val_mse=3.2477e+03, val_r2=-91788.6892, complexity=131.00
+[Gen   70] fitness=nan, val_mse=2.2639e+05, val_r2=-6398410.8878, complexity=172.50
+[Gen   80] fitness=nan, val_mse=6.8978e+04, val_r2=-1949520.1623, complexity=189.50
+[Gen   90] fitness=nan, val_mse=3.2981e-02, val_r2=0.0678, complexity=143.00
+[Gen  100] fitness=nan, val_mse=1.0662e+17, val_r2=-3013408882665447936.0000, complexity=241.00
+[Gen  110] fitness=nan, val_mse=2.6634e-02, val_r2=0.2472, complexity=236.50
+[Gen  120] fitness=nan, val_mse=2.7138e-02, val_r2=0.2330, complexity=182.00
+[Gen  130] fitness=nan, val_mse=2.6714e-02, val_r2=0.2450, complexity=298.00
+[Gen  140] fitness=nan, val_mse=2.8268e-02, val_r2=0.2011, complexity=191.50
+[Gen  150] fitness=nan, val_mse=2.8026e-02, val_r2=0.2079, complexity=229.00
+[Gen  160] fitness=nan, val_mse=3.2743e-02, val_r2=0.0746, complexity=245.50
+[Gen  170] fitness=nan, val_mse=3.3916e+11, val_r2=-9585681062202.3594, complexity=165.00
+[Gen  180] fitness=nan, val_mse=2.7245e-02, val_r2=0.2300, complexity=193.50
+[Gen  190] fitness=nan, val_mse=1.9585e+06, val_r2=-55353954.5199, complexity=228.00
+[Gen  200] fitness=nan, val_mse=2.8650e-02, val_r2=0.1903, complexity=172.00
+[Gen  210] fitness=nan, val_mse=3.0558e-02, val_r2=0.1363, complexity=195.00
+[Gen  220] fitness=nan, val_mse=3.4311e+04, val_r2=-969724.3201, complexity=186.00
+[Gen  230] fitness=nan, val_mse=3.1520e+07, val_r2=-890842258.3990, complexity=187.00
+[Gen  240] fitness=nan, val_mse=4.5305e+05, val_r2=-12804572.1429, complexity=182.50
+[Gen  250] fitness=nan, val_mse=1.0189e+08, val_r2=-2879787687.1921, complexity=181.00
+[Gen  260] fitness=nan, val_mse=2.7702e-02, val_r2=0.2171, complexity=172.00
+[Gen  270] fitness=nan, val_mse=5.0471e+03, val_r2=-142646.9212, complexity=218.50
+[Gen  280] fitness=nan, val_mse=5.4724e+09, val_r2=-154666419259.6891, complexity=192.50
+[Gen  290] fitness=nan, val_mse=1.9867e+06, val_r2=-56149873.7853, complexity=211.50
+
+Best fitness: inf
+
+============================================================
+Phase 2b: Joint Training (MLP + Learnable Program Constants)
+============================================================
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33mdsr_simple_retrain_rl_search_inter[0m at: [34m[0m
+[1;34mwandb[0m: Find logs at: [1;35mwandb/run-20251231_200114-41rh4n57/logs[0m

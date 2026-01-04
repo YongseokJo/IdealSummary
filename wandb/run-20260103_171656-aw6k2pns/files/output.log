@@ -1,0 +1,56 @@
+
+Operator scope: intermediate
+
+Initial model:
+============================================================
+Set-DSR Model Summary
+============================================================
+Number of summaries (K): 12
+Total complexity: 89.00
+------------------------------------------------------------
+s_0: (identity_s(SUM((m * logM))) + SUM(abs((square(identity(logM)) * (logM - (logM - logM))))))
+     complexity: 9.00, depth: 7
+s_1: WSUM((logM * (m * m)))
+     complexity: 4.00, depth: 4
+s_2: square_s((0.6451 * identity_s(identity_s(WMEAN((logM - m))))))
+     complexity: 5.50, depth: 7
+s_3: WSUM(((((square(logM) + (logM + logM)) * (logM - (m * logM))) * ((square(logM) * m) - ((m - logM) - (m + logM)))) * (logM + (square(1.9845) - abs((logM + m))))))
+     complexity: 21.50, depth: 7
+s_4: square_s(WMEAN(logM))
+     complexity: 3.00, depth: 3
+s_5: square_s(identity_s((square_s(identity_s(MEAN(logM))) + (1.7164 - square_s(MEAN(logM))))))
+     complexity: 7.50, depth: 7
+s_6: -0.0560
+     complexity: 0.50, depth: 1
+s_7: 1.0424
+     complexity: 0.50, depth: 1
+s_8: identity_s((WMEAN(((m * 0.6867) * 1.5985)) * (WSUM(logM) + (0.5244 + SUM((logM + m))))))
+     complexity: 12.50, depth: 7
+s_9: ((square_s(WMEAN((m + -0.3556))) * identity_s((-0.3895 * SUM(logM)))) + ((((0.6086 * (MEAN(logM) + WMEAN(logM))) + identity_s(SUM(m))) - WMEAN(m)) + WSUM(logM)))
+     complexity: 22.50, depth: 8
+s_10: (-0.7456 * -0.0928)
+     complexity: 2.00, depth: 2
+s_11: identity_s(0.0313)
+     complexity: 0.50, depth: 2
+============================================================
+
+Using advanced GP evolver (subtree_mutation=True, const_opt=True)
+
+============================================================
+Phase 1: Evolutionary Search (GP)
+============================================================
+
+[Gen 0] Advancing curriculum to level 1
+[Gen    0] fitness=nan, val_mse=1.7501e+08, val_r2=-4946228405.2992, complexity=52.50
+[Gen   10] fitness=nan, val_mse=8.0709e-02, val_r2=-1.2811, complexity=137.00
+[Gen   20] fitness=nan, val_mse=2.1412e+13, val_r2=-605168938770406.6250, complexity=145.50
+
+[Gen 30] Advancing curriculum to level 2
+[Gen   30] fitness=nan, val_mse=4.7381e+28, val_r2=-1339134157610886385170898747392.0000, complexity=122.00
+[Gen   40] fitness=nan, val_mse=3.8108e-02, val_r2=-0.0771, complexity=146.00
+[Gen   50] fitness=nan, val_mse=2.0730e+06, val_r2=-58590112.0279, complexity=141.00
+
+[Gen 60] Advancing curriculum to level 3
+[Gen   60] fitness=nan, val_mse=3.2477e+03, val_r2=-91788.6892, complexity=131.00
+[Gen   70] fitness=nan, val_mse=2.2639e+05, val_r2=-6398410.8878, complexity=172.50
+[Gen   80] fitness=nan, val_mse=6.8978e+04, val_r2=-1949520.1623, complexity=189.50

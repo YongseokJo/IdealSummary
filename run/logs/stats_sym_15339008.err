@@ -1,0 +1,119 @@
+Running "module reset". Resetting modules to system default. The following $MODULEPATH directories have been removed: /sw/rh9.4/spack/default/modules/lmod/linux-rhel9-x86_64/Core
+Lmod has detected the following error: The following module(s) are unknown:
+"cuda/11.8.0"
+
+Please check the spelling or version number. Also try "module spider ..."
+It is also possible your cache file is out-of-date; it may help to try:
+  $ module --ignore_cache load "cuda/11.8.0"
+
+Also make sure that all modulefiles written in TCL start with the string
+#%Module
+
+
+
+
+Currently Loaded Modules:
+  1) gcc-native/13.2       9) craype-x86-milan
+  2) craype/2.7.34        10) cudatoolkit/25.3_12.8
+  3) libfabric/1.22.0     11) craype-accel-nvidia80
+  4) craype-network-ofi   12) cue-login-env/1.1
+  5) cray-mpich/8.1.32    13) slurm-env/0.1
+  6) cray-libsci/25.03.0  14) default
+  7) PrgEnv-gnu/8.6.0     15) python/3.13.5-gcc13.3.1
+  8) cray-dsmml/0.3.1     16) ffmpeg/7.1
+
+ 
+
+++ hostname
++ echo 'Running on host: gpua003.delta.ncsa.illinois.edu'
+++ date
++ echo 'Starting at: Sun Jan  4 14:41:06 CST 2026'
++ echo 'CUDA visible devices: 0'
++ export OMP_NUM_THREADS=6
++ OMP_NUM_THREADS=6
++ export MKL_NUM_THREADS=6
++ MKL_NUM_THREADS=6
++ '[' -d /u/gkerex/pyenv/torch ']'
++ source /u/gkerex/pyenv/torch/bin/activate
+++ deactivate nondestructive
+++ '[' -n '' ']'
+++ '[' -n '' ']'
+++ hash -r
+++ '[' -n '' ']'
+++ unset VIRTUAL_ENV
+++ unset VIRTUAL_ENV_PROMPT
+++ '[' '!' nondestructive = nondestructive ']'
+++ '[' linux-gnu = cygwin ']'
+++ '[' linux-gnu = msys ']'
+++ export VIRTUAL_ENV=/u/gkerex/pyenv/torch
+++ VIRTUAL_ENV=/u/gkerex/pyenv/torch
+++ _OLD_VIRTUAL_PATH=/sw/rh9.4/spack/v1.0.0/sw/linux-x86_64_v2/ffmpeg-7.1-3avnbo4/bin:/sw/rh9.4/spack/v1.0.0/sw/linux-x86_64_v2/python-3.13.5-7bp2p4z/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/compute-sanitizer:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/libnvvp:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/profilers/Nsight_Compute:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/profilers/Nsight_Systems/bin:/opt/cray/pe/mpich/8.1.32/ofi/gnu/11.2/bin:/opt/cray/pe/mpich/8.1.32/bin:/opt/cray/libfabric/1.22.0/bin:/opt/cray/pe/craype/2.7.34/bin:/opt/rh/gcc-toolset-13/root/usr/bin:/sw/rh9.4/user/scripts:/sw/user/scripts:/u/gkerex/pyenv/torch/bin:/u/gkerex/pkg/hpc-setup-kit/rclone:/u/gkerex/.local/bin:/u/gkerex/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/opt/puppetlabs/bin:/opt/cray/pe/bin
+++ PATH=/u/gkerex/pyenv/torch/bin:/sw/rh9.4/spack/v1.0.0/sw/linux-x86_64_v2/ffmpeg-7.1-3avnbo4/bin:/sw/rh9.4/spack/v1.0.0/sw/linux-x86_64_v2/python-3.13.5-7bp2p4z/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/compute-sanitizer:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/libnvvp:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/profilers/Nsight_Compute:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/profilers/Nsight_Systems/bin:/opt/cray/pe/mpich/8.1.32/ofi/gnu/11.2/bin:/opt/cray/pe/mpich/8.1.32/bin:/opt/cray/libfabric/1.22.0/bin:/opt/cray/pe/craype/2.7.34/bin:/opt/rh/gcc-toolset-13/root/usr/bin:/sw/rh9.4/user/scripts:/sw/user/scripts:/u/gkerex/pyenv/torch/bin:/u/gkerex/pkg/hpc-setup-kit/rclone:/u/gkerex/.local/bin:/u/gkerex/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/opt/puppetlabs/bin:/opt/cray/pe/bin
+++ export PATH
+++ '[' -n '' ']'
+++ '[' -z '' ']'
+++ _OLD_VIRTUAL_PS1=
+++ PS1='(torch) '
+++ export PS1
+++ VIRTUAL_ENV_PROMPT='(torch) '
+++ export VIRTUAL_ENV_PROMPT
+++ hash -r
++ python -V
++ which python
++ alias
++ eval declare -f
+++ declare -f
++ /usr/bin/which --tty-only --read-alias --read-functions --show-tilde --show-dot python
+++ hostname
++ echo 'job is starting on gpua003.delta.ncsa.illinois.edu'
++ N_GENERATIONS=20
++ N_WEIGHT_EPOCHS=100
++ N_TRANSFORMS=4
++ TOP_K=16
++ BATCH_SIZE=32
++ H5_PATH=../data/camels_LH.hdf5
++ PY_CMD=(python -u ../src/train_stats_sym.py --h5-path "${H5_PATH}" --n-generations ${N_GENERATIONS} --n-weight-epochs ${N_WEIGHT_EPOCHS} --n-transforms ${N_TRANSFORMS} --top-k ${TOP_K} --batch-size ${BATCH_SIZE} --include-moments --include-cumulants --normalize-input log --normalize-output minmax --wandb --wandb-project stats_sym --save-model --save-plots)
++ echo 'Running: python -u ../src/train_stats_sym.py --h5-path ../data/camels_LH.hdf5 --n-generations 20 --n-weight-epochs 100 --n-transforms 4 --top-k 16 --batch-size 32 --include-moments --include-cumulants --normalize-input log --normalize-output minmax --wandb --wandb-project stats_sym --save-model --save-plots'
++ python -u ../src/train_stats_sym.py --h5-path ../data/camels_LH.hdf5 --n-generations 20 --n-weight-epochs 100 --n-transforms 4 --top-k 16 --batch-size 32 --include-moments --include-cumulants --normalize-input log --normalize-output minmax --wandb --wandb-project stats_sym --save-model --save-plots
+wandb: Currently logged in as: kerex (kerex-northwestern-university) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.23.1
+wandb: Run data is saved locally in /u/gkerex/projects/IdealSummary/run/wandb/run-20260104_144111-vwct9eep
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run brisk-music-9
+wandb: ⭐️ View project at https://wandb.ai/kerex-northwestern-university/stats_sym
+wandb: 🚀 View run at https://wandb.ai/kerex-northwestern-university/stats_sym/runs/vwct9eep
+wandb: WARNING Symlinked 1 file into the W&B run directory; call wandb.save again to sync new files.
+wandb: updating run metadata
+wandb: 
+wandb: Run history:
+wandb:       final/test_loss ▁
+wandb:        final/test_mse ▁
+wandb:         final/test_r2 ▁
+wandb:  final/test_r2_A_AGN1 ▁
+wandb:  final/test_r2_A_AGN2 ▁
+wandb:   final/test_r2_A_SN1 ▁
+wandb:   final/test_r2_A_SN2 ▁
+wandb: final/test_r2_Omega_m ▁
+wandb: final/test_r2_sigma_8 ▁
+wandb:        final/val_loss ▁
+wandb:                   +56 ...
+wandb: 
+wandb: Run summary:
+wandb:       final/test_loss 11.45751
+wandb:        final/test_mse 9.15319
+wandb:         final/test_r2 -333.48053
+wandb:  final/test_r2_A_AGN1 -17.77132
+wandb:  final/test_r2_A_AGN2 -585.58276
+wandb:   final/test_r2_A_SN1 -194.86221
+wandb:   final/test_r2_A_SN2 -784.133
+wandb: final/test_r2_Omega_m -13169.81445
+wandb: final/test_r2_sigma_8 -16200.64648
+wandb:        final/val_loss 11.14561
+wandb:                   +56 ...
+wandb: 
+wandb: 🚀 View run brisk-music-9 at: https://wandb.ai/kerex-northwestern-university/stats_sym/runs/vwct9eep
+wandb: ⭐️ View project at: https://wandb.ai/kerex-northwestern-university/stats_sym
+wandb: Synced 5 W&B file(s), 2 media file(s), 0 artifact file(s) and 1 other file(s)
+wandb: Find logs at: ./wandb/run-20260104_144111-vwct9eep/logs
+++ date
++ echo 'Finished at: Sun Jan  4 14:42:29 CST 2026'

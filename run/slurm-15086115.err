@@ -1,0 +1,88 @@
+Running "module reset". Resetting modules to system default. The following $MODULEPATH directories have been removed: /sw/rh9.4/spack/default/modules/lmod/linux-rhel9-x86_64/Core
+Lmod has detected the following error: The following module(s) are unknown:
+"cuda/11.8.0"
+
+Please check the spelling or version number. Also try "module spider ..."
+It is also possible your cache file is out-of-date; it may help to try:
+  $ module --ignore_cache load "cuda/11.8.0"
+
+Also make sure that all modulefiles written in TCL start with the string
+#%Module
+
+
+
+
+Currently Loaded Modules:
+  1) gcc-native/13.2       9) craype-x86-milan
+  2) craype/2.7.34        10) cudatoolkit/25.3_12.8
+  3) libfabric/1.22.0     11) craype-accel-nvidia80
+  4) craype-network-ofi   12) cue-login-env/1.1
+  5) cray-mpich/8.1.32    13) slurm-env/0.1
+  6) cray-libsci/25.03.0  14) default
+  7) PrgEnv-gnu/8.6.0     15) python/3.13.5-gcc13.3.1
+  8) cray-dsmml/0.3.1
+
+ 
+
++ export OMP_NUM_THREADS=6
++ OMP_NUM_THREADS=6
++ export MKL_NUM_THREADS=6
++ MKL_NUM_THREADS=6
++ '[' -d /u/gkerex/pyenv/torch ']'
++ source /u/gkerex/pyenv/torch/bin/activate
+++ deactivate nondestructive
+++ '[' -n '' ']'
+++ '[' -n '' ']'
+++ hash -r
+++ '[' -n '' ']'
+++ unset VIRTUAL_ENV
+++ unset VIRTUAL_ENV_PROMPT
+++ '[' '!' nondestructive = nondestructive ']'
+++ '[' linux-gnu = cygwin ']'
+++ '[' linux-gnu = msys ']'
+++ export VIRTUAL_ENV=/u/gkerex/pyenv/torch
+++ VIRTUAL_ENV=/u/gkerex/pyenv/torch
+++ _OLD_VIRTUAL_PATH=/sw/rh9.4/spack/v1.0.0/sw/linux-x86_64_v2/python-3.13.5-7bp2p4z/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/compute-sanitizer:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/libnvvp:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/profilers/Nsight_Compute:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/profilers/Nsight_Systems/bin:/opt/cray/pe/mpich/8.1.32/ofi/gnu/11.2/bin:/opt/cray/pe/mpich/8.1.32/bin:/opt/cray/libfabric/1.22.0/bin:/opt/cray/pe/craype/2.7.34/bin:/opt/rh/gcc-toolset-13/root/usr/bin:/sw/rh9.4/user/scripts:/sw/user/scripts:/u/gkerex/.vscode-server/data/User/globalStorage/github.copilot-chat/debugCommand:/u/gkerex/.vscode-server/data/User/globalStorage/github.copilot-chat/copilotCli:/u/gkerex/.vscode-server/cli/servers/Stable-994fd12f8d3a5aa16f17d42c041e5809167e845a/server/bin/remote-cli:/u/gkerex/pkg/hpc-setup-kit/rclone:/u/gkerex/.local/bin:/u/gkerex/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/opt/puppetlabs/bin:/u/gkerex/.vscode-server/extensions/ms-python.debugpy-2025.18.0-linux-x64/bundled/scripts/noConfigScripts:/opt/cray/pe/bin
+++ PATH=/u/gkerex/pyenv/torch/bin:/sw/rh9.4/spack/v1.0.0/sw/linux-x86_64_v2/python-3.13.5-7bp2p4z/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/compute-sanitizer:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/libnvvp:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/profilers/Nsight_Compute:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/profilers/Nsight_Systems/bin:/opt/cray/pe/mpich/8.1.32/ofi/gnu/11.2/bin:/opt/cray/pe/mpich/8.1.32/bin:/opt/cray/libfabric/1.22.0/bin:/opt/cray/pe/craype/2.7.34/bin:/opt/rh/gcc-toolset-13/root/usr/bin:/sw/rh9.4/user/scripts:/sw/user/scripts:/u/gkerex/.vscode-server/data/User/globalStorage/github.copilot-chat/debugCommand:/u/gkerex/.vscode-server/data/User/globalStorage/github.copilot-chat/copilotCli:/u/gkerex/.vscode-server/cli/servers/Stable-994fd12f8d3a5aa16f17d42c041e5809167e845a/server/bin/remote-cli:/u/gkerex/pkg/hpc-setup-kit/rclone:/u/gkerex/.local/bin:/u/gkerex/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/opt/puppetlabs/bin:/u/gkerex/.vscode-server/extensions/ms-python.debugpy-2025.18.0-linux-x64/bundled/scripts/noConfigScripts:/opt/cray/pe/bin
+++ export PATH
+++ '[' -n '' ']'
+++ '[' -z '' ']'
+++ _OLD_VIRTUAL_PS1=
+++ PS1='(torch) '
+++ export PS1
+++ VIRTUAL_ENV_PROMPT='(torch) '
+++ export VIRTUAL_ENV_PROMPT
+++ hash -r
++ python -V
++ which python
++ alias
++ eval declare -f
+++ declare -f
++ /usr/bin/which --tty-only --read-alias --read-functions --show-tilde --show-dot python
+++ hostname
++ echo 'Job starting on gpua082.delta.ncsa.illinois.edu'
++ cd /u/gkerex/projects/IdealSummary
++ python src/train_dsr.py --operator-scope simple --use-learnable-constants --h5-path data/camels_LH.hdf5 --snap 90 --param-keys 0 1 2 3 4 5 --n-summaries 12 --max-depth 6 --n-generations 300 --mlp-epochs 200 --population-size 200 --complexity-weight 0.005 --normalize-input log_std --normalize-output minmax --log-interval 10 --wandb --wandb-project set-dsr --wandb-run-name dsr_simple_retrain --save-path run/data/models/set_dsr/ --plot-path run/data/models/plots/set_dsr/
+wandb: Currently logged in as: kerex (kerex-northwestern-university) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.23.1
+wandb: Run data is saved locally in /u/gkerex/projects/IdealSummary/wandb/run-20251231_174536-wnkp38a5
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run dsr_simple_retrain
+wandb: ⭐️ View project at https://wandb.ai/kerex-northwestern-university/set-dsr
+wandb: 🚀 View run at https://wandb.ai/kerex-northwestern-university/set-dsr/runs/wnkp38a5
+Traceback (most recent call last):
+  File "/u/gkerex/projects/IdealSummary/src/train_dsr.py", line 1248, in <module>
+    main()
+  File "/u/gkerex/projects/IdealSummary/src/train_dsr.py", line 1055, in main
+    mlp_history, param_model = train_parameterized(
+                               ^^^^^^^^^^^^^^^^^^^^
+  File "/u/gkerex/projects/IdealSummary/src/train_dsr.py", line 650, in train_parameterized
+    param_model = model.parameterize_constants()
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/u/gkerex/projects/IdealSummary/src/set_dsr.py", line 606, in parameterize_constants
+    return ParameterizedSetDSR(self)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/u/gkerex/projects/IdealSummary/src/set_dsr.py", line 638, in __init__
+    for prog_idx, prog in enumerate(base_model.programs):
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: 'NoneType' object is not iterable

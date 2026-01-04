@@ -1,0 +1,89 @@
+Running on host: gpua031.delta.ncsa.illinois.edu
+Starting at: Sat Jan  3 18:53:26 CST 2026
+CUDA visible devices: 0
+Python 3.12.1
+/u/gkerex/pyenv/torch/bin/python
+job is starting on gpua031.delta.ncsa.illinois.edu
+Running: python -u ../src/train_stats_sym.py --h5-path ../data/camels_LH.hdf5 --n-generations 20 --n-weight-epochs 5 --n-transforms 4 --top-k 16 --batch-size 64 --normalize-input log_std --normalize-output minmax --wandb --wandb-project stats_sym --save-model --save-plots
+Using device: cuda
+
+Loading data...
+Dataset size: 1000
+Target params: ['Omega_m', 'sigma_8', 'A_SN1', 'A_AGN1', 'A_SN2', 'A_AGN2']
+Split sizes -> train: 800, val: 100, test: 100
+Computing normalization statistics...
+Input features: 1, Output dim: 6
+WandB initialized: smooth-gorge-3
+
+Creating model...
+Model parameters: 4,051
+Summary features: 76
+Statistics per transform: 19
+
+Starting training...
+
+============================================================
+Training Simplified Set-DSR
+============================================================
+Population size: 50
+Generations: 20
+Transforms: 4
+Summary features: 76
+Top-K: 16
+============================================================
+
+Gen   0 | Best: nan | Mean: nan
+  g0: safe_sqrt(abs((m mul x_0)))
+  g1: cos(m)
+  g2: (tanh(cos(x_0)) safe_div safe_log(tanh(x_0)))
+Gen   5 | Best: nan | Mean: nan
+  g0: cos(m)
+  g1: safe_sqrt(x_0)
+  g2: m
+Gen  10 | Best: nan | Mean: nan
+  g0: sin((identity(m) safe_div x_0))
+  g1: identity(m)
+  g2: x_0
+  → Retraining weights and head...
+  → Val R²: -1.5567
+Gen  15 | Best: nan | Mean: nan
+  g0: x_0
+  g1: identity(m)
+  g2: (square(safe_sqrt(m)) sub (sin(x_0) sub x_0))
+
+Final weight training...
+
+Training complete!
+Best fitness: nan
+Final val R²: -0.9861
+
+Best expressions:
+  g0: m
+  g1: x_0
+  g2: (x_0 safe_div identity(tanh(m)))
+  g3: m
+
+Selected features: ['g0_mean', 'g0_var', 'g0_std', 'g0_skew', 'g0_kurtosis', 'g0_min_soft', 'g0_max_soft', 'g0_n_eff', 'g0_moment_1', 'g0_moment_2']...
+
+Final evaluation...
+Validation - Loss: 0.049682, MSE: 5.265478e-02, R²: -0.9861
+  Omega_m: R² = -0.0048
+  sigma_8: R² = -2.9872
+  A_SN1: R² = -1.3796
+  A_AGN1: R² = -0.9041
+  A_SN2: R² = -0.3291
+  A_AGN2: R² = -0.0825
+Test - Loss: 0.055842, MSE: 5.375596e-02, R²: -0.9644
+  Omega_m: R² = -0.0203
+  sigma_8: R² = -3.8992
+  A_SN1: R² = -1.4245
+  A_AGN1: R² = -0.7651
+  A_SN2: R² = -0.5496
+  A_AGN2: R² = -0.0377
+Saved model to data/models/stats_sym/simplified_set_dsr_20260103_185442.pt
+Saved results to data/models/stats_sym/results_20260103_185442.json
+Saved validation plot to data/models/stats_sym/plots/val_pred_vs_true_20260103_185442.png
+Saved test plot to data/models/stats_sym/plots/test_pred_vs_true_20260103_185442.png
+
+Done!
+Finished at: Sat Jan  3 18:54:48 CST 2026

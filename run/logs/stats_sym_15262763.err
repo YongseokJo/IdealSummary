@@ -1,0 +1,120 @@
+Running "module reset". Resetting modules to system default. The following $MODULEPATH directories have been removed: /sw/rh9.4/spack/default/modules/lmod/linux-rhel9-x86_64/Core
+Lmod has detected the following error: The following module(s) are unknown:
+"cuda/11.8.0"
+
+Please check the spelling or version number. Also try "module spider ..."
+It is also possible your cache file is out-of-date; it may help to try:
+  $ module --ignore_cache load "cuda/11.8.0"
+
+Also make sure that all modulefiles written in TCL start with the string
+#%Module
+
+
+
+
+Currently Loaded Modules:
+  1) gcc-native/13.2       9) craype-x86-milan
+  2) craype/2.7.34        10) cudatoolkit/25.3_12.8
+  3) libfabric/1.22.0     11) craype-accel-nvidia80
+  4) craype-network-ofi   12) cue-login-env/1.1
+  5) cray-mpich/8.1.32    13) slurm-env/0.1
+  6) cray-libsci/25.03.0  14) default
+  7) PrgEnv-gnu/8.6.0     15) python/3.13.5-gcc13.3.1
+  8) cray-dsmml/0.3.1     16) ffmpeg/7.1
+
+ 
+
+++ hostname
++ echo 'Running on host: gpua045.delta.ncsa.illinois.edu'
+++ date
++ echo 'Starting at: Sat Jan  3 18:19:41 CST 2026'
++ echo 'CUDA visible devices: 0'
++ export OMP_NUM_THREADS=6
++ OMP_NUM_THREADS=6
++ export MKL_NUM_THREADS=6
++ MKL_NUM_THREADS=6
++ '[' -d /u/gkerex/pyenv/torch ']'
++ source /u/gkerex/pyenv/torch/bin/activate
+++ deactivate nondestructive
+++ '[' -n '' ']'
+++ '[' -n '' ']'
+++ hash -r
+++ '[' -n '' ']'
+++ unset VIRTUAL_ENV
+++ unset VIRTUAL_ENV_PROMPT
+++ '[' '!' nondestructive = nondestructive ']'
+++ '[' linux-gnu = cygwin ']'
+++ '[' linux-gnu = msys ']'
+++ export VIRTUAL_ENV=/u/gkerex/pyenv/torch
+++ VIRTUAL_ENV=/u/gkerex/pyenv/torch
+++ _OLD_VIRTUAL_PATH=/sw/rh9.4/spack/v1.0.0/sw/linux-x86_64_v2/ffmpeg-7.1-3avnbo4/bin:/sw/rh9.4/spack/v1.0.0/sw/linux-x86_64_v2/python-3.13.5-7bp2p4z/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/compute-sanitizer:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/libnvvp:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/profilers/Nsight_Compute:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/profilers/Nsight_Systems/bin:/opt/cray/pe/mpich/8.1.32/ofi/gnu/11.2/bin:/opt/cray/pe/mpich/8.1.32/bin:/opt/cray/libfabric/1.22.0/bin:/opt/cray/pe/craype/2.7.34/bin:/opt/rh/gcc-toolset-13/root/usr/bin:/sw/rh9.4/user/scripts:/sw/user/scripts:/u/gkerex/pkg/hpc-setup-kit/rclone:/u/gkerex/.local/bin:/u/gkerex/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/opt/puppetlabs/bin:/opt/cray/pe/bin
+++ PATH=/u/gkerex/pyenv/torch/bin:/sw/rh9.4/spack/v1.0.0/sw/linux-x86_64_v2/ffmpeg-7.1-3avnbo4/bin:/sw/rh9.4/spack/v1.0.0/sw/linux-x86_64_v2/python-3.13.5-7bp2p4z/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/compute-sanitizer:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/cuda/12.8/libnvvp:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/profilers/Nsight_Compute:/opt/nvidia/hpc_sdk/Linux_x86_64/25.3/profilers/Nsight_Systems/bin:/opt/cray/pe/mpich/8.1.32/ofi/gnu/11.2/bin:/opt/cray/pe/mpich/8.1.32/bin:/opt/cray/libfabric/1.22.0/bin:/opt/cray/pe/craype/2.7.34/bin:/opt/rh/gcc-toolset-13/root/usr/bin:/sw/rh9.4/user/scripts:/sw/user/scripts:/u/gkerex/pkg/hpc-setup-kit/rclone:/u/gkerex/.local/bin:/u/gkerex/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/opt/puppetlabs/bin:/opt/cray/pe/bin
+++ export PATH
+++ '[' -n '' ']'
+++ '[' -z '' ']'
+++ _OLD_VIRTUAL_PS1=
+++ PS1='(torch) '
+++ export PS1
+++ VIRTUAL_ENV_PROMPT='(torch) '
+++ export VIRTUAL_ENV_PROMPT
+++ hash -r
++ python -V
++ which python
++ alias
++ eval declare -f
+++ declare -f
++ /usr/bin/which --tty-only --read-alias --read-functions --show-tilde --show-dot python
+++ hostname
++ echo 'job is starting on gpua045.delta.ncsa.illinois.edu'
++ N_GENERATIONS=20
++ N_WEIGHT_EPOCHS=5
++ N_TRANSFORMS=4
++ TOP_K=16
++ BATCH_SIZE=64
++ H5_PATH=../data/camels_LH.hdf5
++ PY_CMD=(python -u ../src/train_stats_sym.py --h5-path "${H5_PATH}" --n-generations ${N_GENERATIONS} --n-weight-epochs ${N_WEIGHT_EPOCHS} --n-transforms ${N_TRANSFORMS} --top-k ${TOP_K} --batch-size ${BATCH_SIZE} --normalize-input log_std --normalize-output minmax --wandb --wandb-project stats_sym --save-model --save-plots)
++ echo 'Running: python -u ../src/train_stats_sym.py --h5-path ../data/camels_LH.hdf5 --n-generations 20 --n-weight-epochs 5 --n-transforms 4 --top-k 16 --batch-size 64 --normalize-input log_std --normalize-output minmax --wandb --wandb-project stats_sym --save-model --save-plots'
++ python -u ../src/train_stats_sym.py --h5-path ../data/camels_LH.hdf5 --n-generations 20 --n-weight-epochs 5 --n-transforms 4 --top-k 16 --batch-size 64 --normalize-input log_std --normalize-output minmax --wandb --wandb-project stats_sym --save-model --save-plots
+wandb: Currently logged in as: kerex (kerex-northwestern-university) to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.23.1
+wandb: Run data is saved locally in /u/gkerex/projects/IdealSummary/run/wandb/run-20260103_181953-0n81a7js
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run woven-sponge-1
+wandb: ⭐️ View project at https://wandb.ai/kerex-northwestern-university/stats_sym
+wandb: 🚀 View run at https://wandb.ai/kerex-northwestern-university/stats_sym/runs/0n81a7js
+Traceback (most recent call last):
+  File "/u/gkerex/projects/IdealSummary/run/../src/train_stats_sym.py", line 806, in <module>
+    main()
+  File "/u/gkerex/projects/IdealSummary/run/../src/train_stats_sym.py", line 660, in main
+    history = train_simplified_dsr_full(
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/u/gkerex/projects/IdealSummary/run/../src/train_stats_sym.py", line 349, in train_simplified_dsr_full
+    train_weights_and_head(
+  File "/u/gkerex/projects/IdealSummary/run/../src/train_stats_sym.py", line 97, in train_weights_and_head
+    pred = model(X, mask)
+           ^^^^^^^^^^^^^^
+  File "/u/gkerex/pyenv/torch/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/u/gkerex/pyenv/torch/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/u/gkerex/projects/IdealSummary/src/stats_sym.py", line 810, in forward
+    features, _ = self.compute_summary_features(X, mask)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/u/gkerex/projects/IdealSummary/src/stats_sym.py", line 787, in compute_summary_features
+    stats = self.summary_stats(vals, mask, weights)  # (B, n_stats)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/u/gkerex/pyenv/torch/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/u/gkerex/pyenv/torch/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/u/gkerex/projects/IdealSummary/src/stats_sym.py", line 234, in forward
+    q = self._soft_quantile(values, mask, w_norm, p)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/u/gkerex/projects/IdealSummary/src/stats_sym.py", line 279, in _soft_quantile
+    soft_leq = torch.sigmoid((v_i - v_j) / (temp + self.eps))  # (B, N, N)
+                              ~~~~^~~~~
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 112.25 GiB. GPU 0 has a total capacity of 39.49 GiB of which 36.33 GiB is free. Including non-PyTorch memory, this process has 3.15 GiB memory in use. Of the allocated memory 558.25 MiB is allocated by PyTorch, and 2.12 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)

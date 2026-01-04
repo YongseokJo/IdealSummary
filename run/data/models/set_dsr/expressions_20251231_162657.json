@@ -1,0 +1,12 @@
+{
+  "raw": {
+    "s_0": "identity_s(identity_s(SUM(identity((m - m)))))",
+    "s_1": "identity_s(identity_s(MEAN(logM)))",
+    "s_2": "MEAN((logM - m))",
+    "s_3": "identity_s(identity_s(0.5621))",
+    "s_4": "SUM(identity(abs((identity(logM) - (logM * m)))))",
+    "s_5": "9.9984",
+    "s_6": "MEAN(logM)",
+    "s_7": "MEAN(m)"
+  }
+}

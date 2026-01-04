@@ -1,0 +1,86 @@
+# Python
+__pycache__/
+*.py[cod]
+* $py.class
+.Python
+env/
+venv/
+ENV/
+.env
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+nose2/
+coverage.xml
+,coverage
+
+# Pyre / mypy
+.mypy_cache/
+
+# Jupyter
+.ipynb_checkpoints
+
+# VS Code
+.vscode/
+
+# JetBrains
+.idea/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Data files (large, regenerateable)
+data/
+*.hdf5
+*.h5
+
+# Model checkpoints
+run/models/
+*.pt
+*.pth
+
+# WandB
+wandb/
+run/wandb/
+
+# Temporary files
+*.tmp
+*.swp
+
+# Ignore run artifacts and slurm error logs
+run/*.err
+run/*.slurm
+run/*.out
+
+# Python bytecode cache
+__pycache__/

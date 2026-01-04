@@ -1,0 +1,61 @@
+Running on host: gpua003.delta.ncsa.illinois.edu
+Starting at: Sun Jan  4 14:41:06 CST 2026
+CUDA visible devices: 0
+Python 3.12.1
+/u/gkerex/pyenv/torch/bin/python
+job is starting on gpua003.delta.ncsa.illinois.edu
+Running: python -u ../src/train_stats_sym.py --h5-path ../data/camels_LH.hdf5 --n-generations 20 --n-weight-epochs 100 --n-transforms 4 --top-k 16 --batch-size 32 --include-moments --include-cumulants --normalize-input log --normalize-output minmax --wandb --wandb-project stats_sym --save-model --save-plots
+Using device: cuda
+
+Loading data...
+Dataset size: 1000
+Target params: ['Omega_m', 'sigma_8', 'A_SN1', 'A_AGN1', 'A_SN2', 'A_AGN2']
+Split sizes -> train: 800, val: 100, test: 100
+Computing normalization statistics...
+Input features: 1, Output dim: 6
+WandB initialized: brisk-music-9
+
+Creating model...
+Model parameters: 120
+Summary features: 19
+Statistics per transform: 19
+
+Starting training...
+
+============================================================
+Training Simplified Set-DSR (no symbolic transforms)
+============================================================
+Summary features: 19
+Top-K: disabled
+============================================================
+
+
+Training complete!
+Final val R²: -409.6563
+
+Features used: ['x_0']...
+
+Selected features: ['f0_mean', 'f0_var', 'f0_std', 'f0_skew', 'f0_kurtosis', 'f0_min_soft', 'f0_max_soft', 'f0_n_eff', 'f0_moment_1', 'f0_moment_2']...
+
+Final evaluation...
+Validation - Loss: 11.145608, MSE: 1.088695e+01, R²: -409.6563
+  Omega_m: R² = -13835.0176
+  sigma_8: R² = -15423.1045
+  A_SN1: R² = -261.6953
+  A_AGN1: R² = -23.6352
+  A_SN2: R² = -842.5362
+  A_AGN2: R² = -766.5140
+Test - Loss: 11.457514, MSE: 9.153192e+00, R²: -333.4805
+  Omega_m: R² = -13169.8145
+  sigma_8: R² = -16200.6465
+  A_SN1: R² = -194.8622
+  A_AGN1: R² = -17.7713
+  A_SN2: R² = -784.1330
+  A_AGN2: R² = -585.5828
+Saved model to data/models/stats_sym/simplified_set_dsr_20260104_144224.pt
+Saved results to data/models/stats_sym/results_20260104_144224.json
+Saved validation plot to data/models/stats_sym/plots/val_pred_vs_true_20260104_144224.png
+Saved test plot to data/models/stats_sym/plots/test_pred_vs_true_20260104_144224.png
+
+Done!
+Finished at: Sun Jan  4 14:42:29 CST 2026

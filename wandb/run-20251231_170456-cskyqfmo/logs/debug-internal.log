@@ -1,0 +1,12 @@
+{"time":"2025-12-31T17:04:57.236861591-06:00","level":"INFO","msg":"stream: starting","core version":"0.23.1"}
+{"time":"2025-12-31T17:04:57.413009103-06:00","level":"INFO","msg":"stream: created new stream","id":"cskyqfmo"}
+{"time":"2025-12-31T17:04:57.413047716-06:00","level":"INFO","msg":"handler: started","stream_id":"cskyqfmo"}
+{"time":"2025-12-31T17:04:57.415007579-06:00","level":"INFO","msg":"stream: started","id":"cskyqfmo"}
+{"time":"2025-12-31T17:04:57.415024801-06:00","level":"INFO","msg":"writer: started","stream_id":"cskyqfmo"}
+{"time":"2025-12-31T17:04:57.415026745-06:00","level":"INFO","msg":"sender: started","stream_id":"cskyqfmo"}
+{"time":"2025-12-31T18:19:14.02236082-06:00","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-12-31T18:19:14.095767992-06:00","level":"INFO","msg":"handler: operation stats","stats":{}}
+{"time":"2025-12-31T18:19:14.100252807-06:00","level":"INFO","msg":"stream: closing","id":"cskyqfmo"}
+{"time":"2025-12-31T18:19:14.100264939-06:00","level":"INFO","msg":"handler: closed","stream_id":"cskyqfmo"}
+{"time":"2025-12-31T18:19:14.101532064-06:00","level":"INFO","msg":"sender: closed","stream_id":"cskyqfmo"}
+{"time":"2025-12-31T18:19:14.101546401-06:00","level":"INFO","msg":"stream: closed","id":"cskyqfmo"}
