@@ -64,6 +64,34 @@ data/
 *.hdf5
 *.h5
 
+# Auxiliary run data and generated artifacts (keep source code only)
+run/data/
+run/data/**
+run/data/models/
+run/data/models/**
+run/data/models/plots/
+
+# Model checkpoints and weights
+*.pt
+*.pth
+*.ckpt
+run/models/
+
+# Plots and images
+**/plots/
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
+
+# JSON result files and histories
+*.json
+
+# WandB and experiment logs
+wandb/
+run/wandb/
+
 # Model checkpoints
 run/models/
 *.pt
