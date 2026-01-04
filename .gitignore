@@ -92,6 +92,17 @@ run/models/
 wandb/
 run/wandb/
 
+# Common extras to ignore
+*.log
+*.out
+*.err
+*.pyc
+*.pyo
+*.pyd
+*.yaml
+*.yml
+*.wandb
+
 # Model checkpoints
 run/models/
 *.pt

@@ -1,6 +1,0 @@
-Python 3.12.1
-/u/gkerex/pyenv/torch/bin/python
-job is starting on gpua053.delta.ncsa.illinois.edu
-Selected MODEL_TYPE=mlp
-JOB_NAME=IS_mlp_3
-Running: python ../src/train.py --use-hdf5 --h5-path ../data/camels_SB28.hdf5 --snap 90 --train-frac 0.8 --val-frac 0.1 --test-frac 0.1 --normalize-input log --normalize-output minmax --save-model --epochs 5000 --lr=1e-3 --wandb --wandb-project SB28_7params_3 --wandb-run-name mlp --save-model --wandb-save-model --model-type mlp --use-smf --param-keys 14 15 16 17 18 19 20

@@ -1,7 +1,0 @@
-Running on host: gpua073.delta.ncsa.illinois.edu
-Starting at: Sat Jan  3 17:09:41 CST 2026
-CUDA visible devices: 0
-Python 3.12.1
-/u/gkerex/pyenv/torch/bin/python
-job is starting on gpua073.delta.ncsa.illinois.edu
-Running: python -u src/train_stats_sym.py --h5-path data/camels_LH.hdf5 --n-generations 20 --n-weight-epochs 5 --n-transforms 4 --top-k 16 --batch-size 64 --normalize-input log_std --normalize-output minmax --wandb --wandb-project simplified-set-dsr --save-model --save-plots
