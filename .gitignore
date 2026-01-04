@@ -60,6 +60,8 @@ coverage.xml
 logs/
 
 # Data files (large, regenerateable)
+data
+wandb
 data/
 *.hdf5
 *.h5
@@ -123,3 +125,6 @@ run/*.out
 
 # Python bytecode cache
 __pycache__/
+
+*.swp
+*.lastruncode
