@@ -51,7 +51,7 @@ echo "job is starting on $(hostname)"
 
 # Allow overriding some options via environment variables
 N_GENERATIONS=${N_GENERATIONS:-20}
-N_WEIGHT_EPOCHS=${N_WEIGHT_EPOCHS:-100}
+N_WEIGHT_EPOCHS=${N_WEIGHT_EPOCHS:-1000}
 N_TRANSFORMS=${N_TRANSFORMS:-4}
 TOP_K=${TOP_K:-16}
 BATCH_SIZE=${BATCH_SIZE:-32}
@@ -66,17 +66,24 @@ PY_CMD=(python -u ../src/train_stats_sym.py \
   --top-k ${TOP_K} \
   --batch-size ${BATCH_SIZE} \
 	--include-moments \
-	--include-cumulants \
-  --normalize-input log \
+  --normalize-input log_std \
   --normalize-output minmax \
+	--use-mlp-head \
+	--head-hidden-dims 128 512 512 128 \
+	--lr 1e-3 \
   --wandb \
-  --wandb-project stats_sym \
+  --wandb-project stats_sym_sb28 \
+  --wandb-run-name moment_warm_cosine \
   --save-model \
   --save-plots)
 
-#--use-learnable-weights
-##	--use-mlp-head \
-##  --normalize-input log_std \
+#  --scheduler plateau \
+#  --use-learnable-weights
+#  --n-weight-kernels 12 \
+#  --include-cumulants \
+#  --include-moments \
+#  --wandb-run-name only_moment \
+#  --wandb-run-name moment_12_weigths \
 
 echo "Running: ${PY_CMD[*]}"
 "${PY_CMD[@]}"

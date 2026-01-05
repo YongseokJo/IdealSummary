@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import random
 import math
+import time
 
 # Import grammar and expression tree from set_dsr for per-element SR
 from set_dsr import (
@@ -115,42 +116,58 @@ class SummaryStatistics(nn.Module):
         Compute all summary statistics.
         
         Args:
-            values: (B, N) per-element values
+            values: (B, N) or (B, N, C) per-element values
             mask: (B, N) float mask (1 for valid, 0 for padding)
-            weights: (B, N) optional per-element weights (will be normalized)
+            weights: (B, N) or (B, N, K) optional per-element weights (will be normalized)
         
         Returns:
-            stats: (B, n_stats) all computed statistics
+            stats: (B, C * K * n_stats) all computed statistics
         """
-        B, N = values.shape
+        if values.dim() == 2:
+            values = values.unsqueeze(-1)
+        B, N, C = values.shape
         device = values.device
         dtype = values.dtype
         eps = self.eps
+        mask = mask.to(dtype)
         
         # Effective count
         n_eff = mask.sum(dim=1, keepdim=True) + eps  # (B, 1)
         
         # Normalize weights if provided
         if weights is not None:
-            # Apply mask and normalize
-            w = weights * mask
-            w_sum = w.sum(dim=1, keepdim=True) + eps
-            w_norm = w / w_sum  # (B, N) normalized weights
+            if weights.dim() == 2:
+                # Apply mask and normalize
+                w = weights * mask
+                w_sum = w.sum(dim=1, keepdim=True) + eps
+                w_norm = (w / w_sum).unsqueeze(-1)  # (B, N, 1)
+            else:
+                w = weights * mask.unsqueeze(-1)
+                w_sum = w.sum(dim=1, keepdim=True) + eps  # (B, 1, K)
+                w_norm = w / w_sum  # (B, N, K)
+                w_norm = w_norm.unsqueeze(2)  # (B, N, 1, K)
         else:
-            w_norm = mask / n_eff  # uniform weights
+            w_norm = (mask / n_eff).unsqueeze(-1)  # (B, N, 1)
+
+        if w_norm.dim() == 3:
+            w_norm = w_norm.unsqueeze(-1)  # (B, N, 1, 1)
+
+        values_4d = values.unsqueeze(-1)  # (B, N, C, 1)
+        mask_4d = mask.unsqueeze(-1).unsqueeze(-1)  # (B, N, 1, 1)
+        K = w_norm.shape[-1]
         
         # =====================================================================
         # Basic statistics (weighted)
         # =====================================================================
         
         # Mean
-        mean = (values * w_norm).sum(dim=1)  # (B,)
+        mean = (values_4d * w_norm).sum(dim=1)  # (B, C, K)
         
         # Centered values
-        centered = (values - mean.unsqueeze(1)) * mask  # (B, N)
+        centered = (values_4d - mean.unsqueeze(1)) * mask_4d  # (B, N, C, K)
         
         # Variance
-        var = (centered ** 2 * w_norm).sum(dim=1)  # (B,)
+        var = (centered ** 2 * w_norm).sum(dim=1)  # (B, C, K)
         std = torch.sqrt(var + eps)
         
         # Skewness: E[(X - μ)³] / σ³
@@ -167,16 +184,22 @@ class SummaryStatistics(nn.Module):
         
         # Soft max: logsumexp trick
         neg_inf = -1e9
-        masked_vals = values.clone()
-        masked_vals[mask == 0] = neg_inf
+        masked_vals = values.masked_fill(mask.unsqueeze(-1) == 0, neg_inf)
         max_soft = torch.logsumexp(masked_vals / self.soft_quantile_temperature, dim=1) * self.soft_quantile_temperature
         
         # Soft min: -logsumexp(-x)
-        masked_vals_neg = -values.clone()
-        masked_vals_neg[mask == 0] = neg_inf
+        masked_vals_neg = (-values).masked_fill(mask.unsqueeze(-1) == 0, neg_inf)
         min_soft = -torch.logsumexp(masked_vals_neg / self.soft_quantile_temperature, dim=1) * self.soft_quantile_temperature
+
+        if K > 1:
+            max_soft = max_soft.unsqueeze(-1).expand(-1, -1, K)
+            min_soft = min_soft.unsqueeze(-1).expand(-1, -1, K)
+        else:
+            max_soft = max_soft.unsqueeze(-1)
+            min_soft = min_soft.unsqueeze(-1)
         
         # Collect basic stats
+        n_eff_b = n_eff.unsqueeze(-1).expand(-1, C, K)
         stats_list = [
             mean,
             var,
@@ -185,7 +208,7 @@ class SummaryStatistics(nn.Module):
             kurtosis,
             min_soft,
             max_soft,
-            n_eff.squeeze(1),
+            n_eff_b,
         ]
         
         # =====================================================================
@@ -195,9 +218,9 @@ class SummaryStatistics(nn.Module):
         if self.include_moments:
             # Raw moments E[X^k]
             moment_1 = mean
-            moment_2 = (values ** 2 * w_norm).sum(dim=1)
-            moment_3 = (values ** 3 * w_norm).sum(dim=1)
-            moment_4 = (values ** 4 * w_norm).sum(dim=1)
+            moment_2 = (values_4d ** 2 * w_norm).sum(dim=1)
+            moment_3 = (values_4d ** 3 * w_norm).sum(dim=1)
+            moment_4 = (values_4d ** 4 * w_norm).sum(dim=1)
             
             # Central moments E[(X - μ)^k]
             central_moment_2 = var  # same as variance
@@ -230,15 +253,24 @@ class SummaryStatistics(nn.Module):
         # =====================================================================
         
         if self.include_quantiles:
+            wq = w_norm.squeeze(2)  # (B, N, K) or (B, N, 1)
+            if wq.dim() == 2:
+                wq = wq.unsqueeze(-1)
             for p in self.quantile_probs:
-                q = self._soft_quantile(values, mask, w_norm, p)
+                q = torch.empty((B, C, K), device=device, dtype=dtype)
+                for c in range(C):
+                    vals_c = values[:, :, c]
+                    for k in range(K):
+                        q[:, c, k] = self._soft_quantile(vals_c, mask, wq[:, :, k], p)
                 stats_list.append(q)
         
         # Stack all stats
-        stats = torch.stack(stats_list, dim=1)  # (B, n_stats)
+        stats = torch.stack(stats_list, dim=-1)  # (B, C, K, n_stats)
         
         # Replace NaN/Inf with zeros
         stats = torch.nan_to_num(stats, nan=0.0, posinf=0.0, neginf=0.0)
+
+        stats = stats.reshape(B, C * K * len(stats_list))
         
         return stats
     
@@ -330,11 +362,13 @@ class LearnableWeights(nn.Module):
         self,
         input_dim: int,
         hidden_dims: List[int] = [32, 16],
+        n_kernels: int = 1,
         weight_type: str = "softmax",  # "softmax", "sigmoid", "raw"
         temperature: float = 1.0,
     ):
         super().__init__()
         self.input_dim = input_dim
+        self.n_kernels = n_kernels
         self.weight_type = weight_type
         self.temperature = temperature
         
@@ -347,7 +381,7 @@ class LearnableWeights(nn.Module):
                 nn.ReLU(),
             ])
             prev_dim = h_dim
-        layers.append(nn.Linear(prev_dim, 1))  # output single weight per element
+        layers.append(nn.Linear(prev_dim, n_kernels))  # output weight(s) per element
         
         self.mlp = nn.Sequential(*layers)
     
@@ -360,22 +394,23 @@ class LearnableWeights(nn.Module):
             mask: (B, N) mask
         
         Returns:
-            weights: (B, N) per-element weights
+            weights: (B, N, K) per-element weights (K = n_kernels)
         """
         B, N, D = X.shape
         
         # Compute raw weights
-        raw_weights = self.mlp(X).squeeze(-1)  # (B, N)
+        raw_weights = self.mlp(X)  # (B, N, K)
         
         # Apply masking (set padding to very negative for softmax)
         if self.weight_type == "softmax":
             raw_weights = raw_weights / self.temperature
-            raw_weights = raw_weights.masked_fill(mask == 0, -1e9)
+            neg_inf = torch.finfo(raw_weights.dtype).min
+            raw_weights = raw_weights.masked_fill(mask.unsqueeze(-1) == 0, neg_inf)
             weights = F.softmax(raw_weights, dim=1)
         elif self.weight_type == "sigmoid":
-            weights = torch.sigmoid(raw_weights) * mask
+            weights = torch.sigmoid(raw_weights) * mask.unsqueeze(-1)
         else:  # raw
-            weights = raw_weights * mask
+            weights = raw_weights * mask.unsqueeze(-1)
         
         return weights
 
@@ -683,7 +718,7 @@ class SimplifiedSetDSR(nn.Module):
     
     Pipeline:
     1. Per-element symbolic transform g(x): X → g(X) (optional)
-    2. Learnable weights w(x) for weighted statistics
+    2. Learnable weights w(x) for weighted statistics (optionally multiple kernels)
     3. Classical summary statistics on g(X) or raw features
     4. Top-K feature selection (optional)
     5. Final prediction head (MLP or linear)
@@ -704,6 +739,7 @@ class SimplifiedSetDSR(nn.Module):
         quantile_probs: List[float] = [0.1, 0.25, 0.5, 0.75, 0.9],
         use_learnable_weights: bool = True,
         weight_hidden_dims: List[int] = [32, 16],
+        n_weight_kernels: int = 1,
         selection_method: str = "learnable",
         use_mlp_head: bool = True,
         head_hidden_dims: List[int] = [64, 32],
@@ -721,6 +757,7 @@ class SimplifiedSetDSR(nn.Module):
         self.use_learnable_weights = use_learnable_weights
         self.use_symbolic_transforms = use_symbolic_transforms
         self.use_top_k = use_top_k
+        self.n_weight_kernels = max(1, int(n_weight_kernels))
         
         # 1. Per-element transform (optional)
         if use_symbolic_transforms:
@@ -742,14 +779,16 @@ class SimplifiedSetDSR(nn.Module):
             soft_quantile_temperature=soft_quantile_temperature,
         )
         
-        # Total number of summary features = n_channels * n_stats
-        self.n_summary_features = n_channels * self.summary_stats.n_stats
+        # Total number of summary features = n_channels * n_stats * n_weight_kernels (if weights enabled)
+        kernel_mult = self.n_weight_kernels if use_learnable_weights else 1
+        self.n_summary_features = n_channels * self.summary_stats.n_stats * kernel_mult
         
         # 3. Learnable weights (optional)
         if use_learnable_weights:
             self.weight_net = LearnableWeights(
                 input_dim=n_features,
                 hidden_dims=weight_hidden_dims,
+                n_kernels=self.n_weight_kernels,
             )
         else:
             self.weight_net = None
@@ -777,18 +816,47 @@ class SimplifiedSetDSR(nn.Module):
         
         # Store feature names for interpretability
         self._build_feature_names()
+        self.profile_steps = False
+        self.profile_stats = {}
+
+    def enable_step_profiling(self, enabled: bool = True) -> None:
+        self.profile_steps = enabled
+        if enabled:
+            self.reset_profile_stats()
+
+    def reset_profile_stats(self) -> None:
+        self.profile_stats = {
+            "weights": 0.0,
+            "transform": 0.0,
+            "stats": 0.0,
+            "selector": 0.0,
+            "head": 0.0,
+            "summary_total": 0.0,
+            "batches": 0,
+        }
     
     def _build_feature_names(self):
         """Build names for all summary features."""
         self.feature_names = []
+        include_kernels = self.use_learnable_weights and self.n_weight_kernels > 1
         if self.use_symbolic_transforms:
             for t in range(self.n_transforms):
-                for stat_name in self.summary_stats.stat_names:
-                    self.feature_names.append(f"g{t}_{stat_name}")
+                if include_kernels:
+                    for k in range(self.n_weight_kernels):
+                        for stat_name in self.summary_stats.stat_names:
+                            self.feature_names.append(f"g{t}_k{k}_{stat_name}")
+                else:
+                    for stat_name in self.summary_stats.stat_names:
+                        self.feature_names.append(f"g{t}_{stat_name}")
         else:
             for f in range(self.n_features):
-                for stat_name in self.summary_stats.stat_names:
-                    self.feature_names.append(f"f{f}_{stat_name}")
+                if include_kernels:
+                    for k in range(self.n_weight_kernels):
+                        for stat_name in self.summary_stats.stat_names:
+                            self.feature_names.append(f"f{f}_k{k}_{stat_name}")
+                else:
+                    for stat_name in self.summary_stats.stat_names:
+                        self.feature_names.append(f"f{f}_{stat_name}")
     
     def compute_summary_features(
         self,
@@ -804,33 +872,56 @@ class SimplifiedSetDSR(nn.Module):
         
         Returns:
             features: (B, n_summary_features) all summary statistics
-            weights: (B, N) per-element weights (if learnable)
+            weights: (B, N) or (B, N, K) per-element weights (if learnable)
         """
         B, N, D = X.shape
         
+        t0 = time.perf_counter() if self.profile_steps else None
+
         # Compute per-element weights
         if self.weight_net is not None:
-            weights = self.weight_net(X, mask)  # (B, N)
+            if self.profile_steps and X.is_cuda:
+                torch.cuda.synchronize()
+            t_w = time.perf_counter() if self.profile_steps else None
+            weights = self.weight_net(X, mask)  # (B, N, K)
+            if t_w is not None:
+                if X.is_cuda:
+                    torch.cuda.synchronize()
+                self.profile_stats["weights"] += time.perf_counter() - t_w
         else:
             weights = None
         
         # Apply per-element transforms or use raw features
         if self.use_symbolic_transforms:
+            if self.profile_steps and X.is_cuda:
+                torch.cuda.synchronize()
+            t_t = time.perf_counter() if self.profile_steps else None
             transformed = self.transform(X, mask)  # (B, N, n_transforms)
+            if t_t is not None:
+                if X.is_cuda:
+                    torch.cuda.synchronize()
+                self.profile_stats["transform"] += time.perf_counter() - t_t
             n_channels = self.n_transforms
         else:
             # Use raw features directly
             transformed = X  # (B, N, D)
             n_channels = D
         
-        # Compute summary statistics for each channel
-        all_stats = []
-        for c in range(n_channels):
-            vals = transformed[:, :, c]  # (B, N)
-            stats = self.summary_stats(vals, mask, weights)  # (B, n_stats)
-            all_stats.append(stats)
-        
-        features = torch.cat(all_stats, dim=1)  # (B, n_channels * n_stats)
+        # Compute summary statistics for all channels/kernels
+        if self.profile_steps and X.is_cuda:
+            torch.cuda.synchronize()
+        t_s = time.perf_counter() if self.profile_steps else None
+        features = self.summary_stats(transformed, mask, weights)
+        if t_s is not None:
+            if X.is_cuda:
+                torch.cuda.synchronize()
+            self.profile_stats["stats"] += time.perf_counter() - t_s
+
+        if t0 is not None:
+            if X.is_cuda:
+                torch.cuda.synchronize()
+            self.profile_stats["summary_total"] += time.perf_counter() - t0
+            self.profile_stats["batches"] += 1
         
         return features, weights
     
@@ -854,12 +945,27 @@ class SimplifiedSetDSR(nn.Module):
         
         # Select top-K features (if enabled)
         if self.use_top_k:
+            if self.profile_steps and X.is_cuda:
+                torch.cuda.synchronize()
+            t_sel = time.perf_counter() if self.profile_steps else None
             selected, _ = self.selector(features)
+            if t_sel is not None:
+                if X.is_cuda:
+                    torch.cuda.synchronize()
+                self.profile_stats["selector"] += time.perf_counter() - t_sel
         else:
             selected = features
         
         # Predict
-        return self.head(selected)
+        if self.profile_steps and X.is_cuda:
+            torch.cuda.synchronize()
+        t_head = time.perf_counter() if self.profile_steps else None
+        out = self.head(selected)
+        if t_head is not None:
+            if X.is_cuda:
+                torch.cuda.synchronize()
+            self.profile_stats["head"] += time.perf_counter() - t_head
+        return out
     
     def get_selected_feature_names(self) -> List[str]:
         """Get names of selected features."""
@@ -1272,6 +1378,7 @@ def create_simplified_model(
     include_cumulants: bool = True,
     include_quantiles: bool = False,
     use_learnable_weights: bool = True,
+    n_weight_kernels: int = 1,
     selection_method: str = "learnable",
     use_mlp_head: bool = True,
     use_symbolic_transforms: bool = True,
@@ -1288,6 +1395,7 @@ def create_simplified_model(
         include_cumulants=include_cumulants,
         include_quantiles=include_quantiles,
         use_learnable_weights=use_learnable_weights,
+        n_weight_kernels=n_weight_kernels,
         selection_method=selection_method,
         use_mlp_head=use_mlp_head,
         use_symbolic_transforms=use_symbolic_transforms,

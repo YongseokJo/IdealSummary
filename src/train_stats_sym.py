@@ -17,6 +17,7 @@ import sys
 import argparse
 import math
 import json
+import time
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 
@@ -24,6 +25,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.amp import autocast, GradScaler
 from torch.utils.data import DataLoader, Subset
 
 from data import HDF5SetDataset, hdf5_collate
@@ -45,6 +47,55 @@ from train import (
 # Training Functions
 # =============================================================================
 
+def compute_summary_feature_stats(
+    model: SimplifiedSetDSR,
+    loader: DataLoader,
+    device: torch.device,
+    input_norm: str = "none",
+    input_stats: dict = None,
+    eps: float = 1e-8,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Compute dataset-wide mean/std for summary statistics features."""
+    model.eval()
+    total = 0
+    feat_sum = None
+    feat_sumsq = None
+
+    with torch.no_grad():
+        for batch in loader:
+            X, mask, y = batch
+            X, mask, y = X.to(device), mask.to(device), y.to(device)
+            X, mask, _ = normalize_batch(
+                X, mask, y,
+                input_norm, input_stats,
+                output_norm="none", output_stats=None,
+            )
+            feats, _ = model.compute_summary_features(X, mask)
+            if feat_sum is None:
+                feat_sum = feats.sum(dim=0)
+                feat_sumsq = (feats ** 2).sum(dim=0)
+            else:
+                feat_sum += feats.sum(dim=0)
+                feat_sumsq += (feats ** 2).sum(dim=0)
+            total += feats.shape[0]
+
+    if total == 0:
+        raise ValueError("Empty loader when computing summary feature statistics")
+
+    mean = feat_sum / float(total)
+    var = feat_sumsq / float(total) - mean ** 2
+    std = torch.sqrt(torch.clamp(var, min=0.0)) + eps
+    return mean, std
+
+
+def apply_summary_feature_norm(
+    features: torch.Tensor,
+    mean: torch.Tensor,
+    std: torch.Tensor,
+) -> torch.Tensor:
+    return (features - mean) / std
+
+
 def train_weights_and_head(
     model: SimplifiedSetDSR,
     train_loader: DataLoader,
@@ -52,7 +103,18 @@ def train_weights_and_head(
     device: torch.device,
     n_epochs: int = 50,
     lr: float = 1e-3,
+    lr_head: Optional[float] = None,
+    lr_weight: Optional[float] = None,
     weight_decay: float = 1e-4,
+    scheduler_name: str = "warmup_cosine",
+    warmup_frac: float = 0.1,
+    min_lr_scale: float = 0.05,
+    profile: bool = False,
+    profile_epochs: int = 2,
+    profile_steps: bool = False,
+    profile_steps_epochs: int = 2,
+    use_amp: bool = False,
+    amp_dtype: str = "fp16",
     input_norm: str = "none",
     input_stats: dict = None,
     output_norm: str = "none",
@@ -79,14 +141,54 @@ def train_weights_and_head(
         sample_mask = None
     
     # Only train weights and head parameters
-    params = list(model.head.parameters())
+    params_head = list(model.head.parameters())
+    params_weight = []
     if model.weight_net is not None:
-        params += list(model.weight_net.parameters())
+        params_weight = list(model.weight_net.parameters())
     if model.selector is not None and model.selector.method == "learnable":
-        params.append(model.selector.gate_logits)
-    
-    optimizer = torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, n_epochs)
+        params_head.append(model.selector.gate_logits)
+
+    def make_scheduler(optimizer, name, total_epochs, steps_per_epoch):
+        if name == "cosine":
+            return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, total_epochs)
+        if name == "plateau":
+            return torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode="min",
+                factor=0.5,
+                patience=3,
+                min_lr=optimizer.defaults["lr"] * min_lr_scale,
+            )
+        if name == "warmup_cosine":
+            total_steps = max(total_epochs * steps_per_epoch, 1)
+            warmup_steps = max(int(total_steps * warmup_frac), 1)
+
+            def lr_lambda(step):
+                if step < warmup_steps:
+                    return float(step + 1) / float(warmup_steps)
+                progress = float(step - warmup_steps) / float(max(total_steps - warmup_steps, 1))
+                cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+                return min_lr_scale + (1.0 - min_lr_scale) * cosine
+
+            return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+        raise ValueError(f"Unknown scheduler: {name}")
+
+    steps_per_epoch = max(len(train_loader), 1)
+    lr_head = lr if lr_head is None else lr_head
+    lr_weight = lr if lr_weight is None else lr_weight
+
+    optimizer_head = torch.optim.AdamW(params_head, lr=lr_head, weight_decay=weight_decay)
+    scheduler_head = make_scheduler(optimizer_head, scheduler_name, n_epochs, steps_per_epoch)
+    optimizer_weight = None
+    scheduler_weight = None
+    if len(params_weight) > 0:
+        optimizer_weight = torch.optim.AdamW(params_weight, lr=lr_weight, weight_decay=weight_decay)
+        scheduler_weight = make_scheduler(optimizer_weight, scheduler_name, n_epochs, steps_per_epoch)
+
+    per_batch_scheduler = scheduler_name == "warmup_cosine"
+    use_amp = use_amp and device.type == "cuda"
+    amp_dtype_t = torch.float16 if amp_dtype == "fp16" else torch.bfloat16
+    scaler = GradScaler("cuda", enabled=use_amp and amp_dtype_t == torch.float16)
     
     history = {"train_loss": [], "val_loss": [], "val_r2": []}
     eps = 1e-8
@@ -96,27 +198,159 @@ def train_weights_and_head(
         model.train()
         epoch_loss = 0.0
         n_batches = 0
+        do_profile = profile and epoch < profile_epochs
+        if do_profile:
+            t_epoch = time.perf_counter()
+            t_load = 0.0
+            t_norm = 0.0
+            t_zero = 0.0
+            t_fwd = 0.0
+            t_loss = 0.0
+            t_bwd = 0.0
+            t_clip = 0.0
+            t_opt = 0.0
+            t_sched = 0.0
+            t_other = 0.0
+        if profile_steps and epoch < profile_steps_epochs:
+            if hasattr(model, "reset_profile_stats"):
+                model.reset_profile_stats()
         
         for batch in train_loader:
+            t0 = time.perf_counter() if do_profile else None
             X, mask, y = batch
             X, mask, y = X.to(device), mask.to(device), y.to(device)
+            if t0 is not None:
+                t_load += time.perf_counter() - t0
             
             # Normalize
+            t1 = time.perf_counter() if t0 is not None else None
             X, mask, y = normalize_batch(X, mask, y, input_norm, input_stats, output_norm, output_stats)
-            
-            optimizer.zero_grad()
-            pred = model(X, mask)
+            if t1 is not None:
+                t_norm += time.perf_counter() - t1
+
+            if do_profile and device.type == "cuda":
+                torch.cuda.synchronize()
+            t_zero_start = time.perf_counter() if do_profile else None
+            optimizer_head.zero_grad()
+            if optimizer_weight is not None:
+                optimizer_weight.zero_grad()
+            if t_zero_start is not None:
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                t_zero += time.perf_counter() - t_zero_start
+
+            if do_profile and device.type == "cuda":
+                torch.cuda.synchronize()
+            t_fwd_start = time.perf_counter() if do_profile else None
+            with autocast("cuda", enabled=use_amp, dtype=amp_dtype_t):
+                pred = model(X, mask)
+            if t_fwd_start is not None:
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                t_fwd += time.perf_counter() - t_fwd_start
+
+            if do_profile and device.type == "cuda":
+                torch.cuda.synchronize()
+            t_loss_start = time.perf_counter() if do_profile else None
             loss = F.mse_loss(pred, y)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(params, 1.0)
-            optimizer.step()
+            if t_loss_start is not None:
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                t_loss += time.perf_counter() - t_loss_start
+
+            if do_profile and device.type == "cuda":
+                torch.cuda.synchronize()
+            t_bwd_start = time.perf_counter() if do_profile else None
+            if scaler.is_enabled():
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
+            if t_bwd_start is not None:
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                t_bwd += time.perf_counter() - t_bwd_start
+
+            if do_profile and device.type == "cuda":
+                torch.cuda.synchronize()
+            t_clip_start = time.perf_counter() if do_profile else None
+            if scaler.is_enabled():
+                scaler.unscale_(optimizer_head)
+                if optimizer_weight is not None:
+                    scaler.unscale_(optimizer_weight)
+            torch.nn.utils.clip_grad_norm_(params_head + params_weight, 1.0)
+            if t_clip_start is not None:
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                t_clip += time.perf_counter() - t_clip_start
+
+            if do_profile and device.type == "cuda":
+                torch.cuda.synchronize()
+            t_opt_start = time.perf_counter() if do_profile else None
+            if scaler.is_enabled():
+                scaler.step(optimizer_head)
+                if optimizer_weight is not None:
+                    scaler.step(optimizer_weight)
+                scaler.update()
+            else:
+                optimizer_head.step()
+                if optimizer_weight is not None:
+                    optimizer_weight.step()
+            if t_opt_start is not None:
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                t_opt += time.perf_counter() - t_opt_start
+
+            if per_batch_scheduler:
+                if do_profile and device.type == "cuda":
+                    torch.cuda.synchronize()
+                t_sched_start = time.perf_counter() if do_profile else None
+                scheduler_head.step()
+                if scheduler_weight is not None:
+                    scheduler_weight.step()
+                if t_sched_start is not None:
+                    if device.type == "cuda":
+                        torch.cuda.synchronize()
+                    t_sched += time.perf_counter() - t_sched_start
             
             epoch_loss += loss.item()
             n_batches += 1
-        
-        scheduler.step()
+
         avg_train_loss = epoch_loss / max(n_batches, 1)
         history["train_loss"].append(avg_train_loss)
+        if do_profile:
+            accounted = t_load + t_norm + t_zero + t_fwd + t_loss + t_bwd + t_clip + t_opt + t_sched
+            t_other = max((time.perf_counter() - t_epoch) - accounted, 0.0)
+            epoch_time = time.perf_counter() - t_epoch
+            print(
+                "Profile epoch "
+                f"{epoch_offset + epoch}: "
+                f"total={epoch_time:.3f}s "
+                f"load={t_load:.3f}s "
+                f"norm={t_norm:.3f}s "
+                f"zero={t_zero:.3f}s "
+                f"fwd={t_fwd:.3f}s "
+                f"loss={t_loss:.3f}s "
+                f"bwd={t_bwd:.3f}s "
+                f"clip={t_clip:.3f}s "
+                f"opt={t_opt:.3f}s "
+                f"sched={t_sched:.3f}s "
+                f"other={t_other:.3f}s"
+            )
+        if profile_steps and epoch < profile_steps_epochs and hasattr(model, "profile_stats"):
+            stats = model.profile_stats
+            batches = max(int(stats.get("batches", 0)), 1)
+            summary_total = stats.get("summary_total", 0.0)
+            print(
+                "Step profile epoch "
+                f"{epoch_offset + epoch}: "
+                f"summary_total={summary_total:.3f}s "
+                f"weights={stats.get('weights', 0.0):.3f}s "
+                f"transform={stats.get('transform', 0.0):.3f}s "
+                f"stats={stats.get('stats', 0.0):.3f}s "
+                f"selector={stats.get('selector', 0.0):.3f}s "
+                f"head={stats.get('head', 0.0):.3f}s "
+                f"per_batch={(summary_total / batches):.4f}s"
+            )
         
         # Validation
         if val_loader is not None:
@@ -129,16 +363,53 @@ def train_weights_and_head(
                     X, mask, y = batch
                     X, mask, y = X.to(device), mask.to(device), y.to(device)
                     X, mask, y = normalize_batch(X, mask, y, input_norm, input_stats, output_norm, output_stats)
-                    
-                    pred = model(X, mask)
-                    val_loss += F.mse_loss(pred, y).item()
+
+                    with autocast("cuda", enabled=use_amp, dtype=amp_dtype_t):
+                        pred = model(X, mask)
+                        batch_loss = F.mse_loss(pred, y)
+                    val_loss += batch_loss.item()
                     all_preds.append(pred)
                     all_targets.append(y)
             
             val_loss /= len(val_loader)
             history["val_loss"].append(val_loss)
-            
-            # Compute R² (overall and per-target)
+
+            if scheduler_name == "plateau":
+                if do_profile and device.type == "cuda":
+                    torch.cuda.synchronize()
+                t_sched_start = time.perf_counter() if do_profile else None
+                scheduler_head.step(val_loss)
+                if scheduler_weight is not None:
+                    scheduler_weight.step(val_loss)
+                if t_sched_start is not None:
+                    if device.type == "cuda":
+                        torch.cuda.synchronize()
+                    t_sched += time.perf_counter() - t_sched_start
+        if not per_batch_scheduler and scheduler_name != "plateau":
+            if do_profile and device.type == "cuda":
+                torch.cuda.synchronize()
+            t_sched_start = time.perf_counter() if do_profile else None
+            scheduler_head.step()
+            if scheduler_weight is not None:
+                scheduler_weight.step()
+            if t_sched_start is not None:
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                t_sched += time.perf_counter() - t_sched_start
+        if not per_batch_scheduler and scheduler_name == "plateau" and val_loader is None:
+            if do_profile and device.type == "cuda":
+                torch.cuda.synchronize()
+            t_sched_start = time.perf_counter() if do_profile else None
+            scheduler_head.step(avg_train_loss)
+            if scheduler_weight is not None:
+                scheduler_weight.step(avg_train_loss)
+            if t_sched_start is not None:
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                t_sched += time.perf_counter() - t_sched_start
+
+        # Compute R² (overall and per-target)
+        if val_loader is not None:
             all_preds = torch.cat(all_preds, dim=0)
             all_targets = torch.cat(all_targets, dim=0)
             ss_res = ((all_targets - all_preds) ** 2).sum()
@@ -210,15 +481,21 @@ def train_weights_and_head(
                     log_dict2 = {"phase2/epoch": epoch_offset + epoch}
                     # Limit number of logged features to avoid huge logs
                     max_log_feats = min(50, feat_mean.shape[0])
-                    for i in range(max_log_feats):
-                        log_dict2[f"phase2/feat_mean_{i}"] = float(feat_mean[i])
-                        log_dict2[f"phase2/feat_std_{i}"] = float(feat_std[i])
+                    if False:
+                        for i in range(max_log_feats):
+                            log_dict2[f"phase2/feat_mean_{i}"] = float(feat_mean[i])
+                            log_dict2[f"phase2/feat_std_{i}"] = float(feat_std[i])
 
                     # log sample weights for first batch element if available
-                    if weights_sample is not None:
-                        w0 = weights_sample[0].cpu().numpy().tolist()
-                        # store as a list under one key
-                        log_dict2["phase2/sample_weights_0"] = w0
+                    if False and weights_sample is not None:
+                        w0 = weights_sample[0].cpu().numpy()
+                        # store as a list under one key or one key per kernel
+                        if w0.ndim == 1:
+                            log_dict2["phase2/sample_weights_0"] = w0.tolist()
+                        else:
+                            max_kernels = min(4, w0.shape[1])
+                            for k in range(max_kernels):
+                                log_dict2[f"phase2/sample_weights_0_k{k}"] = w0[:, k].tolist()
 
                     wandb_run.log(log_dict2)
                 except Exception:
@@ -334,9 +611,22 @@ def train_simplified_dsr_full(
     device: torch.device,
     n_generations: int = 50,
     n_weight_epochs: int = 20,
+    lr: float = 1e-3,
+    lr_head: Optional[float] = None,
+    lr_weight: Optional[float] = None,
+    weight_decay: float = 1e-4,
     complexity_weight: float = 0.01,
     log_interval: int = 10,
     weight_retrain_interval: int = 10,
+    scheduler_name: str = "warmup_cosine",
+    warmup_frac: float = 0.1,
+    min_lr_scale: float = 0.05,
+    profile: bool = False,
+    profile_epochs: int = 2,
+    profile_steps: bool = False,
+    profile_steps_epochs: int = 2,
+    use_amp: bool = False,
+    amp_dtype: str = "fp16",
     input_norm: str = "none",
     input_stats: dict = None,
     output_norm: str = "none",
@@ -362,6 +652,9 @@ def train_simplified_dsr_full(
         "best_expressions": [],
     }
     
+    if profile_steps and hasattr(model, "enable_step_profiling"):
+        model.enable_step_profiling(True)
+
     # If symbolic transforms are disabled, just train weights and head
     if not model.use_symbolic_transforms:
         print(f"\n{'='*60}")
@@ -375,7 +668,18 @@ def train_simplified_dsr_full(
         total_epochs = n_weight_epochs  # Use same total training time
         final_history = train_weights_and_head(
             model, train_loader, val_loader, device,
-            n_epochs=total_epochs, lr=1e-3,
+            n_epochs=total_epochs, lr=lr,
+            lr_head=lr_head, lr_weight=lr_weight,
+            weight_decay=weight_decay,
+            scheduler_name=scheduler_name,
+            warmup_frac=warmup_frac,
+            min_lr_scale=min_lr_scale,
+            profile=profile,
+            profile_epochs=profile_epochs,
+            profile_steps=profile_steps,
+            profile_steps_epochs=profile_steps_epochs,
+            use_amp=use_amp,
+            amp_dtype=amp_dtype,
             input_norm=input_norm, input_stats=input_stats,
             output_norm=output_norm, output_stats=output_stats,
             wandb_run=wandb_run,
@@ -428,10 +732,29 @@ def train_simplified_dsr_full(
     
     for gen in range(n_generations):
         # Evaluate fitness
+        if profile_steps and hasattr(model, "reset_profile_stats"):
+            model.reset_profile_stats()
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+        t_gp = time.perf_counter() if profile_steps else None
         fitness_scores = evolver.evaluate_fitness(
             X_train_norm, mask_train, y_train_norm,
             complexity_weight=complexity_weight,
         )
+        if t_gp is not None:
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            gp_time = time.perf_counter() - t_gp
+            stats = getattr(model, "profile_stats", {})
+            summary_total = stats.get("summary_total", 0.0)
+            print(
+                f"GP profile gen {gen}: "
+                f"gp_total={gp_time:.3f}s "
+                f"summary_total={summary_total:.3f}s "
+                f"weights={stats.get('weights', 0.0):.3f}s "
+                f"transform={stats.get('transform', 0.0):.3f}s "
+                f"stats={stats.get('stats', 0.0):.3f}s"
+            )
         
         best_expr, best_fitness = evolver.get_best()
         mean_fitness = np.mean(fitness_scores)
@@ -466,7 +789,18 @@ def train_simplified_dsr_full(
             model.transform.expressions = best_expr
             train_weights_and_head(
                 model, train_loader, val_loader, device,
-                n_epochs=n_weight_epochs, lr=1e-3,
+                n_epochs=n_weight_epochs, lr=lr,
+                lr_head=lr_head, lr_weight=lr_weight,
+                weight_decay=weight_decay,
+                scheduler_name=scheduler_name,
+                warmup_frac=warmup_frac,
+                min_lr_scale=min_lr_scale,
+                profile=profile,
+                profile_epochs=profile_epochs,
+                profile_steps=profile_steps,
+                profile_steps_epochs=profile_steps_epochs,
+                use_amp=use_amp,
+                amp_dtype=amp_dtype,
                 input_norm=input_norm, input_stats=input_stats,
                 output_norm=output_norm, output_stats=output_stats,
                 wandb_run=wandb_run,
@@ -498,7 +832,18 @@ def train_simplified_dsr_full(
     model.transform.expressions = best_expr
     final_history = train_weights_and_head(
         model, train_loader, val_loader, device,
-        n_epochs=n_weight_epochs * 2, lr=1e-3,
+        n_epochs=n_weight_epochs * 2, lr=lr,
+        lr_head=lr_head, lr_weight=lr_weight,
+        weight_decay=weight_decay,
+        scheduler_name=scheduler_name,
+        warmup_frac=warmup_frac,
+        min_lr_scale=min_lr_scale,
+        profile=profile,
+        profile_epochs=profile_epochs,
+        profile_steps=profile_steps,
+        profile_steps_epochs=profile_steps_epochs,
+        use_amp=use_amp,
+        amp_dtype=amp_dtype,
         input_norm=input_norm, input_stats=input_stats,
         output_norm=output_norm, output_stats=output_stats,
         wandb_run=wandb_run,
@@ -572,10 +917,12 @@ def main(argv=None):
                         help="Use symbolic per-element transforms (default: use raw features)")
     parser.add_argument("--use-top-k", action="store_true", default=False,
                         help="Use top-K feature selection (default: use all stats)")
-    parser.add_argument("--head-hidden-dims", nargs="+", type=int, default=[64, 32],
+    parser.add_argument("--head-hidden-dims", nargs="+", type=int, default=[128, 128],
                         help="Hidden dimensions for MLP head")
     parser.add_argument("--weight-hidden-dims", nargs="+", type=int, default=[32, 16],
                         help="Hidden dimensions for weight network")
+    parser.add_argument("--n-weight-kernels", type=int, default=1,
+                        help="Number of learnable weight kernels for summary stats")
     
     # Training arguments - Evolution
     parser.add_argument("--n-generations", type=int, default=50,
@@ -592,8 +939,32 @@ def main(argv=None):
                         help="Epochs for weight/head training per interval")
     parser.add_argument("--lr", type=float, default=1e-3,
                         help="Learning rate for gradient descent")
+    parser.add_argument("--lr-head", type=float, default=None,
+                        help="Learning rate for prediction head (defaults to --lr)")
+    parser.add_argument("--lr-weight", type=float, default=None,
+                        help="Learning rate for weight network (defaults to --lr)")
     parser.add_argument("--weight-decay", type=float, default=1e-4,
                         help="Weight decay for optimizer")
+    parser.add_argument("--scheduler", choices=["cosine", "warmup_cosine", "plateau"],
+                        default="warmup_cosine", help="LR scheduler type")
+    parser.add_argument("--warmup-frac", type=float, default=0.1,
+                        help="Warmup fraction for warmup_cosine scheduler")
+    parser.add_argument("--min-lr-scale", type=float, default=0.05,
+                        help="Minimum LR scale for warmup_cosine or plateau")
+    parser.add_argument("--amp", action="store_true",
+                        help="Enable automatic mixed precision (CUDA only)")
+    parser.add_argument("--amp-dtype", choices=["fp16", "bf16"], default="fp16",
+                        help="AMP dtype (fp16 or bf16)")
+    parser.add_argument("--compile", action="store_true",
+                        help="Use torch.compile on the model (PyTorch 2.x)")
+    parser.add_argument("--profile", action="store_true",
+                        help="Print basic time profile for training epochs")
+    parser.add_argument("--profile-epochs", type=int, default=2,
+                        help="Number of epochs to profile")
+    parser.add_argument("--profile-steps", action="store_true",
+                        help="Print per-step timing for summary stats and head")
+    parser.add_argument("--profile-steps-epochs", type=int, default=2,
+                        help="Number of epochs to profile per-step timings")
     
     # Logging
     parser.add_argument("--log-interval", type=int, default=5,
@@ -753,6 +1124,7 @@ def main(argv=None):
         include_quantiles=args.include_quantiles,
         use_learnable_weights=args.use_learnable_weights,
         weight_hidden_dims=args.weight_hidden_dims,
+        n_weight_kernels=args.n_weight_kernels,
         selection_method=args.selection_method,
         use_mlp_head=args.use_mlp_head,
         head_hidden_dims=args.head_hidden_dims,
@@ -761,6 +1133,34 @@ def main(argv=None):
     )
     
     model = model.to(device)
+
+    print("Computing summary-statistics feature normalization...")
+    orig_compute_summary_features = model.compute_summary_features
+    summary_mean, summary_std = compute_summary_feature_stats(
+        model=model,
+        loader=train_loader,
+        device=device,
+        input_norm=args.normalize_input,
+        input_stats=input_stats,
+    )
+    summary_mean = summary_mean.to(device)
+    summary_std = summary_std.to(device)
+
+    def _compute_summary_features_norm(X, mask):
+        feats, weights = orig_compute_summary_features(X, mask)
+        feats = apply_summary_feature_norm(feats, summary_mean, summary_std)
+        return feats, weights
+
+    model.compute_summary_features = _compute_summary_features_norm
+    model.summary_feature_mean = summary_mean
+    model.summary_feature_std = summary_std
+
+    if args.compile:
+        try:
+            model = torch.compile(model)
+            print("Model compiled with torch.compile")
+        except Exception as exc:
+            print(f"Warning: torch.compile failed: {exc}")
     
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
@@ -788,9 +1188,22 @@ def main(argv=None):
         device=device,
         n_generations=args.n_generations,
         n_weight_epochs=args.n_weight_epochs,
+        lr=args.lr,
+        lr_head=args.lr_head,
+        lr_weight=args.lr_weight,
+        weight_decay=args.weight_decay,
         complexity_weight=args.complexity_weight,
         log_interval=args.log_interval,
         weight_retrain_interval=args.weight_retrain_interval,
+        scheduler_name=args.scheduler,
+        warmup_frac=args.warmup_frac,
+        min_lr_scale=args.min_lr_scale,
+        use_amp=args.amp,
+        amp_dtype=args.amp_dtype,
+        profile=args.profile,
+        profile_epochs=args.profile_epochs,
+        profile_steps=args.profile_steps,
+        profile_steps_epochs=args.profile_steps_epochs,
         input_norm=args.normalize_input,
         input_stats=input_stats,
         output_norm=args.normalize_output,
@@ -868,6 +1281,8 @@ def main(argv=None):
             "args": vars(args),
             "input_stats": input_stats,
             "output_stats": output_stats,
+            "summary_feature_mean": getattr(model, "summary_feature_mean", None),
+            "summary_feature_std": getattr(model, "summary_feature_std", None),
         }, model_path)
         print(f"Saved model to {model_path}")
         
