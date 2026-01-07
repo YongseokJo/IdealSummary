@@ -28,10 +28,11 @@ PY_CMD=(python -u ../src/train_stats_sym.py \
   --n-weight-kernels 12 \
 	--head-hidden-dims 128 512 512 128 \
 	--lr 1e-3 \
+  --num-workers 4 --pin-memory --persistent-workers --prefetch-factor 4 \
 	--profile \
 	--profile-steps \
-  --profile-epochs 100 \
-  --profile-steps-epochs 100)
+  --profile-epochs 2 \
+  --profile-steps-epochs 2)
 
 #  --scheduler plateau \
 #  --use-learnable-weights

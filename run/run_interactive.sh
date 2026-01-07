@@ -21,17 +21,18 @@ which python3
 
 #python ../src/diagnostics.py --h5-path ../data/camels_SB28.hdf5 --snap 90 --sample 500 --use-smf
 
-#python ../src/train.py --use-hdf5 --use-smf --h5-path ../data/camels_LH.hdf5 --snap 90 --param-keys Omega_m A_SN1  \
-#	   --normalize-input log --normalize-output minmax --save-model --epochs 100 \
-#	  --wandb --wandb-project deepset-reg --wandb-run-name smf-mlp-test --save-model --wandb-save-model
+python ../src/train.py --use-hdf5 --use-smf --h5-path ../data/camels_LH.hdf5 --snap 90 \
+	   --normalize-input log --normalize-output minmax --save-model --epochs 1000 \
+		 --mask-prob 0.01 --mask-bias-strength 2.0 \
+		 --wandb --wandb-project deepset-reg3 --wandb-run-name smf_mask_test --save-model --wandb-save-model
 
 #Omega_m sigma_8 A_SN1 A_SN2 A_AGN1 A_AGN2  \
 
 #--param-keys 0 1 2 3 \
-python ../src/train.py --use-hdf5 --h5-path ../data/camels_SB28.hdf5 --snap 90 --train-frac 0.8 --test-frac 0.1 --val-frac 0.1 \
-	--normalize-input log --normalize-output minmax --save-model --epochs 5000 --lr=1e-3 \
-	--param-keys 0 1 2 3 4 5 6 \
- 	--wandb --wandb-project SB28_7params --wandb-run-name slotsetpool --save-model --wandb-save-model --model-type slotsetpool
+#python ../src/train.py --use-hdf5 --h5-path ../data/camels_SB28.hdf5 --snap 90 --train-frac 0.8 --test-frac 0.1 --val-frac 0.1 \
+#	--normalize-input log --normalize-output minmax --save-model --epochs 5000 --lr=1e-3 \
+#	--param-keys 0 1 2 3 4 5 6 \
+# 	--wandb --wandb-project SB28_7params --wandb-run-name slotsetpool --save-model --wandb-save-model --model-type slotsetpool
 #	 --wandb --wandb-project deepset-reg3 --wandb-run-name smf-test2 --save-model --wandb-save-model --use-smf 
  	#--wandb --wandb-project deepset-reg3 --wandb-run-name slotsetpool --save-model --wandb-save-model --model-type slotsetpool
 		#--wandb --wandb-project deepset-reg3 --wandb-run-name deepset-test2 --save-model --wandb-save-model # --multi-phi 

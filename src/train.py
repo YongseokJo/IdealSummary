@@ -1,11 +1,12 @@
 import argparse
 import math
 import random
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import matplotlib.pyplot as plt
 
 import numpy as np
 import os
+import h5py
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset, Subset
@@ -15,6 +16,143 @@ from deepset import DeepSet, MLP, DeepSetMultiPhi
 from setpooling import SlotSetPool
 from data import HDF5SetDataset, hdf5_collate, smf_collate
 import functools
+
+
+def stellar_mass_function(masses, bins: int = 3, mass_range: Tuple[float, float] = (8.0, 11.0), box_size: float = 25 / 0.6711):
+    m = np.asarray(masses, dtype=np.float64)
+    m = np.where(m <= 0, 1e6, m)  # avoid log10(0)
+    logm = np.log10(m)
+
+    hist, edges = np.histogram(logm, bins=bins, range=mass_range)
+    dM = edges[1] - edges[0]
+    centers = 0.5 * (edges[1:] + edges[:-1])
+
+    # number density per dex
+    phi = hist / dM / (box_size ** 3)
+    return phi, centers
+
+
+def compute_and_save_smf(
+    h5_path: str,
+    snap: int,
+    bins: int,
+    mass_range: Tuple[float, float],
+    box_size: float,
+    overwrite: bool = True,
+):
+    with h5py.File(h5_path, "a") as f:
+        g = f[f"snap_{snap:03d}"]
+        mstar_vlen = g["SubhaloStellarMass"]
+        nsims = mstar_vlen.shape[0]
+
+        smf_grp = g.require_group("smf")
+        if overwrite:
+            for name in ("phi", "logM"):
+                if name in smf_grp:
+                    del smf_grp[name]
+
+        phi_all = np.zeros((nsims, bins), dtype=np.float32)
+
+        centers_ref = None
+        for sim in range(nsims):
+            phi, centers = stellar_mass_function(mstar_vlen[sim], bins=bins, mass_range=mass_range, box_size=box_size)
+            phi_all[sim, :] = phi
+            if centers_ref is None:
+                centers_ref = centers
+
+        smf_grp.create_dataset("phi", data=phi_all)
+        if centers_ref is not None:
+            smf_grp.create_dataset("logM", data=np.asarray(centers_ref, dtype=np.float32))
+
+
+class SMFOnTheFlyDataset(Dataset):
+    def __init__(
+        self,
+        h5_path: str,
+        snap: int,
+        param_keys: Optional[List[str]] = None,
+        bins: int = 13,
+        mass_range: Tuple[float, float] = (8.0, 12.0),
+        box_size: float = 25 / 0.6711,
+        data_field="SubhaloStellarMass",
+        mass_min=None,
+        mass_max=None,
+        mass_feature_idx=None,
+        mass_feature_name=None,
+        feature_names=None,
+        mask_prob: float = 0.0,
+        mask_bias_low: float = 8.0,
+        mask_bias_high: float = 11.0,
+        mask_bias_strength: float = 0.0,
+        mask_keep_one: bool = True,
+    ):
+        if isinstance(data_field, (list, tuple, np.ndarray)):
+            if len(data_field) != 1:
+                raise ValueError("SMF dataset expects a single data_field entry")
+            data_field = data_field[0]
+        self.data_field = data_field
+        self.bins = int(bins)
+        self.mass_range = (float(mass_range[0]), float(mass_range[1]))
+        self.box_size = float(box_size)
+        self.mask_prob = float(mask_prob) if mask_prob is not None else 0.0
+        self.mask_bias_low = float(mask_bias_low)
+        self.mask_bias_high = float(mask_bias_high)
+        self.mask_bias_strength = float(mask_bias_strength)
+        self.mask_keep_one = bool(mask_keep_one)
+        if self.bins <= 0:
+            raise ValueError("bins must be positive")
+        if self.mass_range[0] >= self.mass_range[1]:
+            raise ValueError("mass_range must be (low, high)")
+        if self.box_size <= 0:
+            raise ValueError("box_size must be positive")
+
+        self.base = HDF5SetDataset(
+            h5_path=h5_path,
+            snap=snap,
+            param_keys=param_keys,
+            data_field=data_field,
+            mass_min=mass_min,
+            mass_max=mass_max,
+            mass_feature_idx=mass_feature_idx,
+            mass_feature_name=mass_feature_name,
+            feature_names=feature_names,
+        )
+        self.param_names = getattr(self.base, "param_names", None)
+        self.param_keys = self.base.param_keys
+        self.seeds = getattr(self.base, "seeds", None)
+
+    def _apply_random_mask_np(self, masses: np.ndarray) -> np.ndarray:
+        if self.mask_prob <= 0 or masses.size == 0:
+            return masses
+        if masses.ndim != 1:
+            raise ValueError("SMF masking expects 1D masses per simulation")
+        m = np.where(masses > 0, masses, 1e-6).astype(np.float64, copy=False)
+        logm = np.log10(m)
+        prob = float(self.mask_prob)
+        if self.mask_bias_strength > 0 and self.mask_bias_high > self.mask_bias_low:
+            scaled = (logm - self.mask_bias_low) / (self.mask_bias_high - self.mask_bias_low)
+            scaled = np.clip(scaled, 0.0, 1.0)
+            prob = prob * (1.0 + self.mask_bias_strength * (1.0 - scaled))
+        prob = np.clip(prob, 0.0, 1.0)
+        keep = np.random.rand(masses.shape[0]) >= prob
+        if self.mask_keep_one and not keep.any() and masses.shape[0] > 0:
+            keep[np.argmax(masses)] = True
+        return masses[keep]
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, idx: int):
+        masses, y = self.base[idx]
+        if self.mask_prob > 0:
+            masses = self._apply_random_mask_np(np.asarray(masses))
+        phi, _ = stellar_mass_function(
+            masses,
+            bins=self.bins,
+            mass_range=self.mass_range,
+            box_size=self.box_size,
+        )
+        return phi.astype(np.float32), y
 
 
 def compute_stats_from_dataset(dataset, sample_limit: int = 1000):
@@ -115,6 +253,70 @@ def normalize_batch(X, mask, y, input_norm: str, input_stats: dict, output_norm:
                 y = (y - y_min.view(1, -1)) / (y_max.view(1, -1) - y_min.view(1, -1) + eps)
 
     return X, mask, y
+
+
+def resolve_feature_index(feature_names, feature_idx, feature_name, fallback_name="SubhaloStellarMass"):
+    if feature_idx is not None and feature_name is not None:
+        raise ValueError("Specify only one of mask_feature_idx or mask_feature_name")
+    if feature_idx is not None:
+        return int(feature_idx)
+    if feature_name is not None:
+        if feature_names is None:
+            raise ValueError("mask_feature_name requires feature_names to be available")
+        if feature_name not in feature_names:
+            raise ValueError(f"Unknown mask_feature_name '{feature_name}'; available: {feature_names}")
+        return feature_names.index(feature_name)
+    if feature_names:
+        if fallback_name in feature_names:
+            return feature_names.index(fallback_name)
+        return 0
+    return 0
+
+
+def apply_subhalo_mask(
+    X,
+    mask,
+    prob: float,
+    feature_idx: int,
+    bias_low: float,
+    bias_high: float,
+    bias_strength: float,
+    keep_one: bool,
+):
+    if mask is None or prob is None or prob <= 0:
+        return X, mask
+    if X.ndim == 2:
+        mass = X
+    else:
+        if feature_idx < 0 or feature_idx >= X.shape[2]:
+            raise ValueError(f"mask_feature_idx {feature_idx} out of bounds for data with {X.shape[2]} features")
+        mass = X[:, :, feature_idx]
+    valid = mask > 0
+    prob_t = torch.full_like(mass, float(prob))
+    if bias_strength > 0 and bias_high > bias_low:
+        logm = torch.log10(torch.clamp(mass, min=1e-12))
+        scaled = (logm - bias_low) / (bias_high - bias_low)
+        scaled = torch.clamp(scaled, 0.0, 1.0)
+        prob_t = prob_t * (1.0 + bias_strength * (1.0 - scaled))
+    prob_t = torch.clamp(prob_t, 0.0, 1.0)
+    prob_t = prob_t * valid.to(prob_t.dtype)
+    drop = torch.rand_like(prob_t) < prob_t
+    new_mask = mask * (~drop).to(mask.dtype)
+    if keep_one:
+        valid_counts = valid.sum(dim=1)
+        new_counts = new_mask.sum(dim=1)
+        need_fix = (valid_counts > 0) & (new_counts == 0)
+        if need_fix.any():
+            mass_safe = mass.clone()
+            mass_safe[~valid] = -float("inf")
+            keep_idx = mass_safe.argmax(dim=1)
+            batch_idx = torch.nonzero(need_fix, as_tuple=False).squeeze(1)
+            new_mask[batch_idx, keep_idx[batch_idx]] = 1.0
+    if X.ndim == 2:
+        X = X * new_mask
+    else:
+        X = X * new_mask.unsqueeze(-1)
+    return X, new_mask
 
 
 def _inverse_output_norm(tensor: torch.Tensor, output_norm: str, output_stats: dict, device: torch.device, eps: float = 1e-8):
@@ -263,7 +465,7 @@ def plot_pred_vs_true(y_true: np.ndarray, y_pred: np.ndarray, out_path: str, tit
 def train_epoch(model, loader, opt, loss_fn, device,
                 input_norm: str = "none", input_stats: dict = None,
                 output_norm: str = "none", output_stats: dict = None, eps: float = 1e-8,
-                predict_fn=None):
+                predict_fn=None, mask_cfg: dict = None):
     """Train for one epoch and compute metrics.
 
     Returns (avg_loss, metrics_dict) where metrics_dict contains keys
@@ -294,6 +496,18 @@ def train_epoch(model, loader, opt, loss_fn, device,
         if mask is not None:
             mask = mask.to(device)
         y = y.to(device)
+
+        if mask is not None and mask_cfg is not None:
+            X, mask = apply_subhalo_mask(
+                X,
+                mask,
+                prob=mask_cfg["prob"],
+                feature_idx=mask_cfg["feature_idx"],
+                bias_low=mask_cfg["bias_low"],
+                bias_high=mask_cfg["bias_high"],
+                bias_strength=mask_cfg["bias_strength"],
+                keep_one=mask_cfg["keep_one"],
+            )
 
         X, mask, y = normalize_batch(X, mask, y, input_norm, input_stats, output_norm, output_stats)
 
@@ -452,7 +666,20 @@ def main(argv=None):
     parser.add_argument("--use-hdf5", action="store_true", help="Use CAMELS HDF5 dataset instead of synthetic data")
     parser.add_argument("--h5-path", type=str, default="data/camels_LH.hdf5", help="Path to CAMELS LH HDF5 file")
     parser.add_argument("--snap", type=int, default=90, help="Snapshot number to read (e.g. 90)")
+    parser.add_argument("--data-field", nargs="+", default=None, help="HDF5 data field(s) under the snapshot group")
     parser.add_argument("--param-keys", nargs="+", default=None, help="List of params keys to use as targets")
+    parser.add_argument("--mass-min", type=float, nargs="+", default=None, help="Lower mass cut(s) (inclusive); can provide multiple values")
+    parser.add_argument("--mass-max", type=float, nargs="+", default=None, help="Upper mass cut(s) (inclusive); can provide multiple values")
+    parser.add_argument("--mass-feature-idx", type=int, nargs="+", default=None, help="Feature index/indices to apply mass cuts when inputs are multi-dimensional")
+    parser.add_argument("--mass-feature-name", type=str, nargs="+", default=None, help="Feature name(s) to apply mass cuts (uses feature-names or data-field names)")
+    parser.add_argument("--feature-names", type=str, nargs="+", default=None, help="Optional list of input feature names for mapping mass-feature-name to indices")
+    parser.add_argument("--mask-prob", type=float, default=0.0, help="Random subhalo drop probability (0 disables)")
+    parser.add_argument("--mask-feature-idx", type=int, default=None, help="Feature index for masking bias model")
+    parser.add_argument("--mask-feature-name", type=str, default=None, help="Feature name for masking bias model")
+    parser.add_argument("--mask-bias-low", type=float, default=8.0, help="Low log10 mass for higher masking probability")
+    parser.add_argument("--mask-bias-high", type=float, default=11.0, help="High log10 mass for lower masking probability")
+    parser.add_argument("--mask-bias-strength", type=float, default=0.0, help="Strength of low-mass bias for masking")
+    parser.add_argument("--mask-allow-empty", action="store_true", help="Allow all subhalos to be masked for a simulation")
     parser.add_argument("--normalize-input", choices=["none","log","log_std"], default="none", help="Input normalization: log, or log+standardize")
     parser.add_argument("--normalize-output", choices=["none","minmax"], default="none", help="Output normalization: minmax scaling")
     parser.add_argument("--stats-sample", type=int, default=1000, help="Number of samples to use when estimating normalization stats")
@@ -464,7 +691,10 @@ def main(argv=None):
     parser.add_argument("--save-model", action="store_true", help="Save model checkpoint locally at end of training")
     parser.add_argument("--save-path", type=str, default="/u/gkerex/projects/IdealSummary/data/models/checkpoints/", help="Local directory to save model checkpoints")
     parser.add_argument("--plot-path", type=str, default="/u/gkerex/projects/IdealSummary/data/plots/", help="Directory to save prediction plots (separate from checkpoints)")
-    parser.add_argument("--use-smf", action="store_true", help="Use SMF phi as fixed-size input and an MLP (instead of DeepSet)")
+    parser.add_argument("--use-smf", action="store_true", help="Compute SMF from SubhaloStellarMass and use fixed-size inputs")
+    parser.add_argument("--smf-bins", type=int, default=13, help="Number of SMF bins for --use-smf")
+    parser.add_argument("--smf-mass-range", type=float, nargs=2, default=[8.0, 12.0], help="Log10 mass range (min max) for SMF bins")
+    parser.add_argument("--smf-box-size", type=float, default=25/0.6711, help="Box size for SMF number density")
     parser.add_argument("--multi-phi", action="store_true", help="Use DeepSetMultiPhi with multiple phi networks (set-based inputs)")
     parser.add_argument("--model-type", type=str, choices=["deepset", "mlp", "slotsetpool"], default="deepset",
                         help="Model type to construct: deepset (set-based), mlp (fixed-vector), or slotsetpool")
@@ -488,12 +718,57 @@ def main(argv=None):
     else:
         target_dim = None
     
+    mask_cfg = None
     if args.use_hdf5:
-        # Choose dataset type based on --use-smf flag
-        data_field = "smf/phi" if args.use_smf else "SubhaloStellarMass"
+        if args.use_smf:
+            if args.data_field is None:
+                data_fields = ["SubhaloStellarMass"]
+            else:
+                data_fields = args.data_field
+                if len(data_fields) != 1:
+                    raise ValueError("--use-smf expects a single --data-field entry")
+                if data_fields[0] != "SubhaloStellarMass":
+                    raise ValueError("--use-smf computes SMF from SubhaloStellarMass; set --data-field SubhaloStellarMass")
+        else:
+            data_fields = args.data_field if args.data_field is not None else ["SubhaloStellarMass"]
+
+        data_field = data_fields[0] if len(data_fields) == 1 else data_fields
+
+        smf_mass_range = tuple(args.smf_mass_range)
 
         # Probe dataset first to get all available parameter names
-        probe_ds = HDF5SetDataset(h5_path=args.h5_path, snap=args.snap, param_keys=None, data_field=data_field)
+        if args.use_smf:
+            probe_ds = SMFOnTheFlyDataset(
+                h5_path=args.h5_path,
+                snap=args.snap,
+                param_keys=None,
+                bins=args.smf_bins,
+                mass_range=smf_mass_range,
+                box_size=args.smf_box_size,
+                data_field=data_field,
+                mass_min=args.mass_min,
+                mass_max=args.mass_max,
+                mass_feature_idx=args.mass_feature_idx,
+                mass_feature_name=args.mass_feature_name,
+                feature_names=args.feature_names,
+                mask_prob=args.mask_prob,
+                mask_bias_low=args.mask_bias_low,
+                mask_bias_high=args.mask_bias_high,
+                mask_bias_strength=args.mask_bias_strength,
+                mask_keep_one=not args.mask_allow_empty,
+            )
+        else:
+            probe_ds = HDF5SetDataset(
+                h5_path=args.h5_path,
+                snap=args.snap,
+                param_keys=None,
+                data_field=data_field,
+                mass_min=args.mass_min,
+                mass_max=args.mass_max,
+                mass_feature_idx=args.mass_feature_idx,
+                mass_feature_name=args.mass_feature_name,
+                feature_names=args.feature_names,
+            )
         detected_param_names = getattr(probe_ds, 'param_names', None) or getattr(probe_ds, 'param_keys', None)
 
         # If user passed integer indices, map them to names. If no keys, default to all.
@@ -515,8 +790,87 @@ def main(argv=None):
             args.param_keys = detected_param_names
 
         # Now, create the definitive dataset with the resolved parameter keys
-        full_ds = HDF5SetDataset(h5_path=args.h5_path, snap=args.snap, param_keys=args.param_keys, data_field=data_field)
+        if args.use_smf:
+            full_ds = SMFOnTheFlyDataset(
+                h5_path=args.h5_path,
+                snap=args.snap,
+                param_keys=args.param_keys,
+                bins=args.smf_bins,
+                mass_range=smf_mass_range,
+                box_size=args.smf_box_size,
+                data_field=data_field,
+                mass_min=args.mass_min,
+                mass_max=args.mass_max,
+                mass_feature_idx=args.mass_feature_idx,
+                mass_feature_name=args.mass_feature_name,
+                feature_names=args.feature_names,
+                mask_prob=args.mask_prob,
+                mask_bias_low=args.mask_bias_low,
+                mask_bias_high=args.mask_bias_high,
+                mask_bias_strength=args.mask_bias_strength,
+                mask_keep_one=not args.mask_allow_empty,
+            )
+            if args.mask_prob > 0:
+                full_ds_eval = SMFOnTheFlyDataset(
+                    h5_path=args.h5_path,
+                    snap=args.snap,
+                    param_keys=args.param_keys,
+                    bins=args.smf_bins,
+                    mass_range=smf_mass_range,
+                    box_size=args.smf_box_size,
+                    data_field=data_field,
+                    mass_min=args.mass_min,
+                    mass_max=args.mass_max,
+                    mass_feature_idx=args.mass_feature_idx,
+                    mass_feature_name=args.mass_feature_name,
+                    feature_names=args.feature_names,
+                    mask_prob=0.0,
+                    mask_bias_low=args.mask_bias_low,
+                    mask_bias_high=args.mask_bias_high,
+                    mask_bias_strength=args.mask_bias_strength,
+                    mask_keep_one=not args.mask_allow_empty,
+                )
+            else:
+                full_ds_eval = full_ds
+        else:
+            full_ds = HDF5SetDataset(
+                h5_path=args.h5_path,
+                snap=args.snap,
+                param_keys=args.param_keys,
+                data_field=data_field,
+                mass_min=args.mass_min,
+                mass_max=args.mass_max,
+                mass_feature_idx=args.mass_feature_idx,
+                mass_feature_name=args.mass_feature_name,
+                feature_names=args.feature_names,
+            )
         n_total = len(full_ds)
+        if args.mask_prob < 0 or args.mask_prob > 1:
+            raise ValueError("--mask-prob must be between 0 and 1")
+        if args.mask_bias_strength < 0:
+            raise ValueError("--mask-bias-strength must be >= 0")
+        if args.mask_prob > 0:
+            if args.mask_bias_high <= args.mask_bias_low:
+                raise ValueError("--mask-bias-high must be > --mask-bias-low")
+            if not args.use_smf:
+                feature_names = getattr(full_ds, "feature_names", None)
+                if feature_names is None and isinstance(data_field, (list, tuple, np.ndarray)):
+                    feature_names = list(data_field)
+                mask_feature_idx = resolve_feature_index(
+                    feature_names,
+                    args.mask_feature_idx,
+                    args.mask_feature_name,
+                )
+            else:
+                mask_feature_idx = 0
+            mask_cfg = {
+                "prob": float(args.mask_prob),
+                "feature_idx": int(mask_feature_idx),
+                "bias_low": float(args.mask_bias_low),
+                "bias_high": float(args.mask_bias_high),
+                "bias_strength": float(args.mask_bias_strength),
+                "keep_one": not args.mask_allow_empty,
+            }
 
         total_frac = args.train_frac + args.val_frac + args.test_frac
         if total_frac <= 0:
@@ -568,9 +922,16 @@ def main(argv=None):
         train_idx = indices[: train_size]
         val_idx = indices[train_size : train_size + val_size]
         test_idx = indices[train_size + val_size : train_size + val_size + test_size]
-        train_ds = Subset(full_ds, train_idx)
-        val_ds = Subset(full_ds, val_idx)
-        test_ds = Subset(full_ds, test_idx) if test_size > 0 else None
+        if args.use_smf and args.mask_prob > 0:
+            train_ds = Subset(full_ds, train_idx)
+            val_ds = Subset(full_ds_eval, val_idx)
+            test_ds = Subset(full_ds_eval, test_idx) if test_size > 0 else None
+            stats_ds = Subset(full_ds_eval, train_idx)
+        else:
+            train_ds = Subset(full_ds, train_idx)
+            val_ds = Subset(full_ds, val_idx)
+            test_ds = Subset(full_ds, test_idx) if test_size > 0 else None
+            stats_ds = train_ds
         print(f"Split sizes -> train: {train_size}, val: {val_size}, test: {test_size}")
         
         # Get sample to determine dimensions
@@ -597,7 +958,7 @@ def main(argv=None):
     input_stats = None
     output_stats = None
     if args.normalize_input != "none" or args.normalize_output != "none":
-        stats = compute_stats_from_dataset(train_ds, sample_limit=args.stats_sample)
+        stats = compute_stats_from_dataset(stats_ds, sample_limit=args.stats_sample)
         input_stats = {"input_mean": stats["input_mean"], "input_std": stats["input_std"]}
         output_stats = {"y_min": stats["y_min"], "y_max": stats["y_max"]}
 
@@ -676,7 +1037,7 @@ def main(argv=None):
         train_loss, train_metrics = train_epoch(model, train_loader, opt, loss_fn, device,
                                                 input_norm=args.normalize_input, input_stats=input_stats,
                                                 output_norm=args.normalize_output, output_stats=output_stats,
-                                                predict_fn=predict_fn)
+                                                predict_fn=predict_fn, mask_cfg=mask_cfg)
         val_loss, val_metrics = eval_model(model, val_loader, loss_fn, device,
                                           input_norm=args.normalize_input, input_stats=input_stats,
                                           output_norm=args.normalize_output, output_stats=output_stats,

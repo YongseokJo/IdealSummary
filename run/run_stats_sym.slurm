@@ -69,11 +69,15 @@ PY_CMD=(python -u ../src/train_stats_sym.py \
   --normalize-input log_std \
   --normalize-output minmax \
 	--use-mlp-head \
+	--scheduler cosine --min-lr-scale 1e-3 \
+  --use-learnable-weights
+  --n-weight-kernels 12 \
 	--head-hidden-dims 128 512 512 128 \
-	--lr 1e-3 \
+	--lr 1e-6 \
+  --num-workers 4 --pin-memory --persistent-workers --prefetch-factor 4 \
   --wandb \
   --wandb-project stats_sym_sb28 \
-  --wandb-run-name moment_warm_cosine \
+  --wandb-run-name moment_12_weights_cosine_long_small \
   --save-model \
   --save-plots)
 
@@ -84,6 +88,9 @@ PY_CMD=(python -u ../src/train_stats_sym.py \
 #  --include-moments \
 #  --wandb-run-name only_moment \
 #  --wandb-run-name moment_12_weigths \
+#  --scheduler plateau \
+#  --scheduler warm_restarts_with_decay --cycle-steps 4000 --gamma 0.01 --warmup-frac 0.01 --min-lr-scale 1e-5 \
+#	--scheduler cosine --min-lr-scale 1e-4 \
 
 echo "Running: ${PY_CMD[*]}"
 "${PY_CMD[@]}"

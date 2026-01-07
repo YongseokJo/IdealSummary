@@ -96,6 +96,103 @@ def apply_summary_feature_norm(
     return (features - mean) / std
 
 
+def resolve_feature_index(feature_names, feature_idx, feature_name, fallback_name="SubhaloStellarMass"):
+    if feature_idx is not None and feature_name is not None:
+        raise ValueError("Specify only one of mask_feature_idx or mask_feature_name")
+    if feature_idx is not None:
+        return int(feature_idx)
+    if feature_name is not None:
+        if feature_names is None:
+            raise ValueError("mask_feature_name requires feature_names to be available")
+        if feature_name not in feature_names:
+            raise ValueError(f"Unknown mask_feature_name '{feature_name}'; available: {feature_names}")
+        return feature_names.index(feature_name)
+    if feature_names:
+        if fallback_name in feature_names:
+            return feature_names.index(fallback_name)
+        return 0
+    return 0
+
+
+def apply_subhalo_mask(
+    X: torch.Tensor,
+    mask: torch.Tensor,
+    prob: float,
+    feature_idx: int,
+    bias_low: float,
+    bias_high: float,
+    bias_strength: float,
+    keep_one: bool,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    if mask is None or prob is None or prob <= 0:
+        return X, mask
+    if feature_idx < 0 or feature_idx >= X.shape[2]:
+        raise ValueError(f"mask_feature_idx {feature_idx} out of bounds for data with {X.shape[2]} features")
+    mass = X[:, :, feature_idx]
+    valid = mask > 0
+    prob_t = torch.full_like(mass, float(prob))
+    if bias_strength > 0 and bias_high > bias_low:
+        logm = torch.log10(torch.clamp(mass, min=1e-12))
+        scaled = (logm - bias_low) / (bias_high - bias_low)
+        scaled = torch.clamp(scaled, 0.0, 1.0)
+        prob_t = prob_t * (1.0 + bias_strength * (1.0 - scaled))
+    prob_t = torch.clamp(prob_t, 0.0, 1.0)
+    prob_t = prob_t * valid.to(prob_t.dtype)
+    drop = torch.rand_like(prob_t) < prob_t
+    new_mask = mask * (~drop).to(mask.dtype)
+    if keep_one:
+        valid_counts = valid.sum(dim=1)
+        new_counts = new_mask.sum(dim=1)
+        need_fix = (valid_counts > 0) & (new_counts == 0)
+        if need_fix.any():
+            mass_safe = mass.clone()
+            mass_safe[~valid] = -float("inf")
+            keep_idx = mass_safe.argmax(dim=1)
+            batch_idx = torch.nonzero(need_fix, as_tuple=False).squeeze(1)
+            new_mask[batch_idx, keep_idx[batch_idx]] = 1.0
+    X = X * new_mask.unsqueeze(-1)
+    return X, new_mask
+
+
+def warm_restarts_with_decay(
+    optimizer,
+    total_steps: int,
+    warmup_steps: int = 0,
+    cycle_steps: int = 1000,
+    gamma: float = 0.9,
+    min_lr_scale: float = 0.1,
+):
+    total_steps = max(int(total_steps), 1)
+    warmup_steps = max(int(warmup_steps), 0)
+    cycle_steps = max(int(cycle_steps), 1)
+    gamma = float(gamma)
+    min_lr_scale = float(min(max(min_lr_scale, 0.0), 1.0))
+
+    def lr_lambda(step: int):
+        # Clamp to avoid weirdness if training runs longer than planned.
+        step = min(max(step, 0), total_steps - 1)
+
+        if warmup_steps > 0 and step < warmup_steps:
+            return (step + 1) / warmup_steps
+
+        s = step - warmup_steps
+        if s < 0:
+            s = 0
+
+        cycle = s // cycle_steps
+        t_cur = s % cycle_steps
+
+        peak_scale = gamma ** cycle
+
+        denom = max(cycle_steps - 1, 1)
+        progress = t_cur / denom
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+
+        return min_lr_scale + (peak_scale - min_lr_scale) * cosine
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+
 def train_weights_and_head(
     model: SimplifiedSetDSR,
     train_loader: DataLoader,
@@ -108,7 +205,9 @@ def train_weights_and_head(
     weight_decay: float = 1e-4,
     scheduler_name: str = "warmup_cosine",
     warmup_frac: float = 0.1,
-    min_lr_scale: float = 0.05,
+    min_lr_scale: float = 1e-4,
+    cycle_steps: int = 1000,
+    gamma: float = 0.9,
     profile: bool = False,
     profile_epochs: int = 2,
     profile_steps: bool = False,
@@ -119,6 +218,12 @@ def train_weights_and_head(
     input_stats: dict = None,
     output_norm: str = "none",
     output_stats: dict = None,
+    mask_prob: float = 0.0,
+    mask_feature_idx: Optional[int] = None,
+    mask_bias_low: float = 8.0,
+    mask_bias_high: float = 11.0,
+    mask_bias_strength: float = 0.0,
+    mask_keep_one: bool = True,
     wandb_run=None,
     epoch_offset: int = 0,
 ) -> Dict[str, List[float]]:
@@ -150,13 +255,17 @@ def train_weights_and_head(
 
     def make_scheduler(optimizer, name, total_epochs, steps_per_epoch):
         if name == "cosine":
-            return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, total_epochs)
+            return torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, 
+                T_max=total_epochs,
+                eta_min=optimizer.defaults["lr"] * min_lr_scale,
+                )
         if name == "plateau":
             return torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
                 mode="min",
                 factor=0.5,
-                patience=3,
+                patience=10,
                 min_lr=optimizer.defaults["lr"] * min_lr_scale,
             )
         if name == "warmup_cosine":
@@ -166,11 +275,23 @@ def train_weights_and_head(
             def lr_lambda(step):
                 if step < warmup_steps:
                     return float(step + 1) / float(warmup_steps)
-                progress = float(step - warmup_steps) / float(max(total_steps - warmup_steps, 1))
+                progress = float(step - warmup_steps) / float(max(total_steps - warmup_steps - 1, 1))
+                progress = min(max(progress, 0.0), 1.0)
                 cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
                 return min_lr_scale + (1.0 - min_lr_scale) * cosine
 
             return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+        if name == "warm_restarts_with_decay":
+            total_steps = max(total_epochs * steps_per_epoch, 1)
+            warmup_steps = max(int(total_steps * warmup_frac), 0)
+            return warm_restarts_with_decay(
+                optimizer,
+                total_steps=total_steps,
+                warmup_steps=warmup_steps,
+                cycle_steps=cycle_steps,
+                gamma=gamma,
+                min_lr_scale=min_lr_scale,
+            )
         raise ValueError(f"Unknown scheduler: {name}")
 
     steps_per_epoch = max(len(train_loader), 1)
@@ -185,7 +306,7 @@ def train_weights_and_head(
         optimizer_weight = torch.optim.AdamW(params_weight, lr=lr_weight, weight_decay=weight_decay)
         scheduler_weight = make_scheduler(optimizer_weight, scheduler_name, n_epochs, steps_per_epoch)
 
-    per_batch_scheduler = scheduler_name == "warmup_cosine"
+    per_batch_scheduler = scheduler_name in {"warmup_cosine", "warm_restarts_with_decay"}
     use_amp = use_amp and device.type == "cuda"
     amp_dtype_t = torch.float16 if amp_dtype == "fp16" else torch.bfloat16
     scaler = GradScaler("cuda", enabled=use_amp and amp_dtype_t == torch.float16)
@@ -196,11 +317,12 @@ def train_weights_and_head(
     for epoch in range(n_epochs):
         # Training
         model.train()
-        epoch_loss = 0.0
+        epoch_loss = torch.zeros((), device=device)
         n_batches = 0
         do_profile = profile and epoch < profile_epochs
         if do_profile:
             t_epoch = time.perf_counter()
+            t_wait = 0.0
             t_load = 0.0
             t_norm = 0.0
             t_zero = 0.0
@@ -215,12 +337,35 @@ def train_weights_and_head(
             if hasattr(model, "reset_profile_stats"):
                 model.reset_profile_stats()
         
-        for batch in train_loader:
+        loader_iter = iter(train_loader)
+        for _ in range(len(train_loader)):
+            t_wait_start = time.perf_counter() if do_profile else None
+            try:
+                batch = next(loader_iter)
+            except StopIteration:
+                break
+            if t_wait_start is not None:
+                t_wait += time.perf_counter() - t_wait_start
             t0 = time.perf_counter() if do_profile else None
             X, mask, y = batch
-            X, mask, y = X.to(device), mask.to(device), y.to(device)
+            X = X.to(device, non_blocking=True)
+            mask = mask.to(device, non_blocking=True)
+            y = y.to(device, non_blocking=True)
             if t0 is not None:
                 t_load += time.perf_counter() - t0
+
+            if mask_prob > 0:
+                feat_idx = 0 if mask_feature_idx is None else int(mask_feature_idx)
+                X, mask = apply_subhalo_mask(
+                    X,
+                    mask,
+                    prob=mask_prob,
+                    feature_idx=feat_idx,
+                    bias_low=mask_bias_low,
+                    bias_high=mask_bias_high,
+                    bias_strength=mask_bias_strength,
+                    keep_one=mask_keep_one,
+                )
             
             # Normalize
             t1 = time.perf_counter() if t0 is not None else None
@@ -312,19 +457,20 @@ def train_weights_and_head(
                         torch.cuda.synchronize()
                     t_sched += time.perf_counter() - t_sched_start
             
-            epoch_loss += loss.item()
+            epoch_loss += loss.detach()
             n_batches += 1
 
-        avg_train_loss = epoch_loss / max(n_batches, 1)
+        avg_train_loss = (epoch_loss / max(n_batches, 1)).item()
         history["train_loss"].append(avg_train_loss)
         if do_profile:
-            accounted = t_load + t_norm + t_zero + t_fwd + t_loss + t_bwd + t_clip + t_opt + t_sched
+            accounted = t_wait + t_load + t_norm + t_zero + t_fwd + t_loss + t_bwd + t_clip + t_opt + t_sched
             t_other = max((time.perf_counter() - t_epoch) - accounted, 0.0)
             epoch_time = time.perf_counter() - t_epoch
             print(
                 "Profile epoch "
                 f"{epoch_offset + epoch}: "
                 f"total={epoch_time:.3f}s "
+                f"wait={t_wait:.3f}s "
                 f"load={t_load:.3f}s "
                 f"norm={t_norm:.3f}s "
                 f"zero={t_zero:.3f}s "
@@ -355,23 +501,25 @@ def train_weights_and_head(
         # Validation
         if val_loader is not None:
             model.eval()
-            val_loss = 0.0
+            val_loss = torch.zeros((), device=device)
             all_preds, all_targets = [], []
             
             with torch.no_grad():
                 for batch in val_loader:
                     X, mask, y = batch
-                    X, mask, y = X.to(device), mask.to(device), y.to(device)
+                    X = X.to(device, non_blocking=True)
+                    mask = mask.to(device, non_blocking=True)
+                    y = y.to(device, non_blocking=True)
                     X, mask, y = normalize_batch(X, mask, y, input_norm, input_stats, output_norm, output_stats)
 
                     with autocast("cuda", enabled=use_amp, dtype=amp_dtype_t):
                         pred = model(X, mask)
                         batch_loss = F.mse_loss(pred, y)
-                    val_loss += batch_loss.item()
+                    val_loss += batch_loss.detach()
                     all_preds.append(pred)
                     all_targets.append(y)
             
-            val_loss /= len(val_loader)
+            val_loss = (val_loss / len(val_loader)).item()
             history["val_loss"].append(val_loss)
 
             if scheduler_name == "plateau":
@@ -620,7 +768,9 @@ def train_simplified_dsr_full(
     weight_retrain_interval: int = 10,
     scheduler_name: str = "warmup_cosine",
     warmup_frac: float = 0.1,
-    min_lr_scale: float = 0.05,
+    min_lr_scale: float = 1e-4,
+    cycle_steps: int = 1000,
+    gamma: float = 0.9,
     profile: bool = False,
     profile_epochs: int = 2,
     profile_steps: bool = False,
@@ -631,6 +781,12 @@ def train_simplified_dsr_full(
     input_stats: dict = None,
     output_norm: str = "none",
     output_stats: dict = None,
+    mask_prob: float = 0.0,
+    mask_feature_idx: Optional[int] = None,
+    mask_bias_low: float = 8.0,
+    mask_bias_high: float = 11.0,
+    mask_bias_strength: float = 0.0,
+    mask_keep_one: bool = True,
     wandb_run=None,
 ) -> Dict:
     """
@@ -674,6 +830,8 @@ def train_simplified_dsr_full(
             scheduler_name=scheduler_name,
             warmup_frac=warmup_frac,
             min_lr_scale=min_lr_scale,
+            cycle_steps=cycle_steps,
+            gamma=gamma,
             profile=profile,
             profile_epochs=profile_epochs,
             profile_steps=profile_steps,
@@ -682,6 +840,12 @@ def train_simplified_dsr_full(
             amp_dtype=amp_dtype,
             input_norm=input_norm, input_stats=input_stats,
             output_norm=output_norm, output_stats=output_stats,
+            mask_prob=mask_prob,
+            mask_feature_idx=mask_feature_idx,
+            mask_bias_low=mask_bias_low,
+            mask_bias_high=mask_bias_high,
+            mask_bias_strength=mask_bias_strength,
+            mask_keep_one=mask_keep_one,
             wandb_run=wandb_run,
             epoch_offset=0,
         )
@@ -711,6 +875,19 @@ def train_simplified_dsr_full(
     X_train = torch.cat(all_X, dim=0).to(device)
     mask_train = torch.cat(all_mask, dim=0).to(device)
     y_train = torch.cat(all_y, dim=0).to(device)
+
+    if mask_prob > 0:
+        feat_idx = 0 if mask_feature_idx is None else int(mask_feature_idx)
+        X_train, mask_train = apply_subhalo_mask(
+            X_train,
+            mask_train,
+            prob=mask_prob,
+            feature_idx=feat_idx,
+            bias_low=mask_bias_low,
+            bias_high=mask_bias_high,
+            bias_strength=mask_bias_strength,
+            keep_one=mask_keep_one,
+        )
     
     # Normalize training data for GP evaluation
     X_train_norm, mask_train, y_train_norm = normalize_batch(
@@ -795,6 +972,8 @@ def train_simplified_dsr_full(
                 scheduler_name=scheduler_name,
                 warmup_frac=warmup_frac,
                 min_lr_scale=min_lr_scale,
+                cycle_steps=cycle_steps,
+                gamma=gamma,
                 profile=profile,
                 profile_epochs=profile_epochs,
                 profile_steps=profile_steps,
@@ -803,6 +982,12 @@ def train_simplified_dsr_full(
                 amp_dtype=amp_dtype,
                 input_norm=input_norm, input_stats=input_stats,
                 output_norm=output_norm, output_stats=output_stats,
+                mask_prob=mask_prob,
+                mask_feature_idx=mask_feature_idx,
+                mask_bias_low=mask_bias_low,
+                mask_bias_high=mask_bias_high,
+                mask_bias_strength=mask_bias_strength,
+                mask_keep_one=mask_keep_one,
                 wandb_run=wandb_run,
                 epoch_offset=gen * n_weight_epochs,
             )
@@ -838,6 +1023,8 @@ def train_simplified_dsr_full(
         scheduler_name=scheduler_name,
         warmup_frac=warmup_frac,
         min_lr_scale=min_lr_scale,
+        cycle_steps=cycle_steps,
+        gamma=gamma,
         profile=profile,
         profile_epochs=profile_epochs,
         profile_steps=profile_steps,
@@ -846,6 +1033,12 @@ def train_simplified_dsr_full(
         amp_dtype=amp_dtype,
         input_norm=input_norm, input_stats=input_stats,
         output_norm=output_norm, output_stats=output_stats,
+        mask_prob=mask_prob,
+        mask_feature_idx=mask_feature_idx,
+        mask_bias_low=mask_bias_low,
+        mask_bias_high=mask_bias_high,
+        mask_bias_strength=mask_bias_strength,
+        mask_keep_one=mask_keep_one,
         wandb_run=wandb_run,
         epoch_offset=n_generations * n_weight_epochs,
     )
@@ -879,8 +1072,34 @@ def main(argv=None):
                         help="Path to CAMELS LH HDF5 file")
     parser.add_argument("--snap", type=int, default=90,
                         help="Snapshot number to read")
+    parser.add_argument("--data-field", nargs="+", default=None,
+                        help="HDF5 data field(s) under the snapshot group")
     parser.add_argument("--param-keys", nargs="+", default=None,
                         help="List of parameter keys to use as targets")
+    parser.add_argument("--mass-min", type=float, nargs="+", default=None,
+                        help="Lower mass cut(s) (inclusive); can provide multiple values")
+    parser.add_argument("--mass-max", type=float, nargs="+", default=None,
+                        help="Upper mass cut(s) (inclusive); can provide multiple values")
+    parser.add_argument("--mass-feature-idx", type=int, nargs="+", default=None,
+                        help="Feature index/indices to apply mass cuts when inputs are multi-dimensional")
+    parser.add_argument("--mass-feature-name", type=str, nargs="+", default=None,
+                        help="Feature name(s) to apply mass cuts (uses feature-names or data-field names)")
+    parser.add_argument("--feature-names", type=str, nargs="+", default=None,
+                        help="Optional list of input feature names for mapping mass-feature-name to indices")
+    parser.add_argument("--mask-prob", type=float, default=0.0,
+                        help="Random subhalo drop probability (0 disables)")
+    parser.add_argument("--mask-feature-idx", type=int, default=None,
+                        help="Feature index for masking bias model")
+    parser.add_argument("--mask-feature-name", type=str, default=None,
+                        help="Feature name for masking bias model")
+    parser.add_argument("--mask-bias-low", type=float, default=8.0,
+                        help="Low log10 mass for higher masking probability")
+    parser.add_argument("--mask-bias-high", type=float, default=11.0,
+                        help="High log10 mass for lower masking probability")
+    parser.add_argument("--mask-bias-strength", type=float, default=0.0,
+                        help="Strength of low-mass bias for masking")
+    parser.add_argument("--mask-allow-empty", action="store_true",
+                        help="Allow all subhalos to be masked for a simulation")
     parser.add_argument("--train-frac", type=float, default=0.8,
                         help="Fraction of data for training")
     parser.add_argument("--val-frac", type=float, default=0.1,
@@ -889,6 +1108,14 @@ def main(argv=None):
                         help="Fraction of data for testing")
     parser.add_argument("--batch-size", type=int, default=64,
                         help="Batch size for gradient descent phases")
+    parser.add_argument("--num-workers", type=int, default=0,
+                        help="DataLoader workers (0 for single-process)")
+    parser.add_argument("--pin-memory", action="store_true",
+                        help="Pin CPU memory for faster H2D transfers")
+    parser.add_argument("--persistent-workers", action="store_true",
+                        help="Keep DataLoader workers alive between epochs")
+    parser.add_argument("--prefetch-factor", type=int, default=2,
+                        help="Batches prefetched per worker (requires num_workers > 0)")
     
     # Normalization
     parser.add_argument("--normalize-input", choices=["none", "log", "log_std"],
@@ -943,14 +1170,18 @@ def main(argv=None):
                         help="Learning rate for prediction head (defaults to --lr)")
     parser.add_argument("--lr-weight", type=float, default=None,
                         help="Learning rate for weight network (defaults to --lr)")
-    parser.add_argument("--weight-decay", type=float, default=1e-4,
+    parser.add_argument("--weight-decay", type=float, default=1e-3,
                         help="Weight decay for optimizer")
-    parser.add_argument("--scheduler", choices=["cosine", "warmup_cosine", "plateau"],
+    parser.add_argument("--scheduler", choices=["cosine", "warmup_cosine", "warm_restarts_with_decay", "plateau"],
                         default="warmup_cosine", help="LR scheduler type")
-    parser.add_argument("--warmup-frac", type=float, default=0.1,
-                        help="Warmup fraction for warmup_cosine scheduler")
-    parser.add_argument("--min-lr-scale", type=float, default=0.05,
-                        help="Minimum LR scale for warmup_cosine or plateau")
+    parser.add_argument("--warmup-frac", type=float, default=0.01,
+                        help="Warmup fraction for warmup_cosine or warm_restarts_with_decay")
+    parser.add_argument("--cycle-steps", type=int, default=1000,
+                        help="Cycle length (optimizer steps) for warm_restarts_with_decay")
+    parser.add_argument("--gamma", type=float, default=0.9,
+                        help="Peak LR decay per cycle for warm_restarts_with_decay")
+    parser.add_argument("--min-lr-scale", type=float, default=1e-4,
+                        help="Minimum LR scale for warmup_cosine, warm_restarts_with_decay, or plateau")
     parser.add_argument("--amp", action="store_true",
                         help="Enable automatic mixed precision (CUDA only)")
     parser.add_argument("--amp-dtype", choices=["fp16", "bf16"], default="fp16",
@@ -990,19 +1221,26 @@ def main(argv=None):
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-    
+
     # ==========================================================================
     # Data Loading
     # ==========================================================================
     
     print("\nLoading data...")
     
+    data_fields = args.data_field if args.data_field is not None else ["SubhaloStellarMass"]
+
     # Probe dataset for param names
     probe_ds = HDF5SetDataset(
         h5_path=args.h5_path,
         snap=args.snap,
         param_keys=None,
-        data_field="SubhaloStellarMass",
+        data_field=data_fields,
+        mass_min=args.mass_min,
+        mass_max=args.mass_max,
+        mass_feature_idx=args.mass_feature_idx,
+        mass_feature_name=args.mass_feature_name,
+        feature_names=args.feature_names,
     )
     detected_param_names = getattr(probe_ds, 'param_names', None)
     
@@ -1027,12 +1265,36 @@ def main(argv=None):
         h5_path=args.h5_path,
         snap=args.snap,
         param_keys=args.param_keys,
-        data_field="SubhaloStellarMass",
+        data_field=data_fields,
+        mass_min=args.mass_min,
+        mass_max=args.mass_max,
+        mass_feature_idx=args.mass_feature_idx,
+        mass_feature_name=args.mass_feature_name,
+        feature_names=args.feature_names,
     )
     
     n_total = len(full_ds)
     print(f"Dataset size: {n_total}")
     print(f"Target params: {args.param_keys}")
+
+    mask_prob = float(args.mask_prob)
+    if mask_prob < 0 or mask_prob > 1:
+        raise ValueError("--mask-prob must be between 0 and 1")
+    if args.mask_bias_strength < 0:
+        raise ValueError("--mask-bias-strength must be >= 0")
+    if mask_prob > 0 and args.mask_bias_high <= args.mask_bias_low:
+        raise ValueError("--mask-bias-high must be > --mask-bias-low")
+    if mask_prob > 0:
+        feature_names = getattr(full_ds, "feature_names", None)
+        if feature_names is None and isinstance(data_fields, (list, tuple, np.ndarray)):
+            feature_names = list(data_fields)
+        mask_feature_idx = resolve_feature_index(
+            feature_names,
+            args.mask_feature_idx,
+            args.mask_feature_name,
+        )
+    else:
+        mask_feature_idx = None
     
     # Compute splits
     train_size = int(round(args.train_frac * n_total))
@@ -1068,9 +1330,42 @@ def main(argv=None):
     collate_fn = lambda batch: hdf5_collate(batch, max_size=max_size)
     
     # Create data loaders
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn) if test_ds else None
+    num_workers = max(int(args.num_workers), 0)
+    use_persistent = bool(args.persistent_workers and num_workers > 0)
+    prefetch_factor = args.prefetch_factor if num_workers > 0 else None
+    loader_kwargs = {
+        "num_workers": num_workers,
+        "pin_memory": args.pin_memory,
+        "persistent_workers": use_persistent,
+    }
+    if prefetch_factor is not None:
+        loader_kwargs["prefetch_factor"] = prefetch_factor
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=collate_fn,
+        **loader_kwargs,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=collate_fn,
+        **loader_kwargs,
+    )
+    test_loader = (
+        DataLoader(
+            test_ds,
+            batch_size=args.batch_size,
+            shuffle=False,
+            collate_fn=collate_fn,
+            **loader_kwargs,
+        )
+        if test_ds
+        else None
+    )
     
     # Infer dimensions
     sample_x, sample_y = full_ds[0]
@@ -1198,6 +1493,8 @@ def main(argv=None):
         scheduler_name=args.scheduler,
         warmup_frac=args.warmup_frac,
         min_lr_scale=args.min_lr_scale,
+        cycle_steps=args.cycle_steps,
+        gamma=args.gamma,
         use_amp=args.amp,
         amp_dtype=args.amp_dtype,
         profile=args.profile,
@@ -1208,6 +1505,12 @@ def main(argv=None):
         input_stats=input_stats,
         output_norm=args.normalize_output,
         output_stats=output_stats,
+        mask_prob=mask_prob,
+        mask_feature_idx=mask_feature_idx,
+        mask_bias_low=args.mask_bias_low,
+        mask_bias_high=args.mask_bias_high,
+        mask_bias_strength=args.mask_bias_strength,
+        mask_keep_one=not args.mask_allow_empty,
         wandb_run=wandb_run,
     )
     
