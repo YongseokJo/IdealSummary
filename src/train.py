@@ -759,6 +759,7 @@ def main(argv=None):
     parser.add_argument("--save-model", action="store_true", help="Save model checkpoint locally at end of training")
     parser.add_argument("--save-path", type=str, default="/u/gkerex/projects/IdealSummary/data/models/checkpoints/", help="Local directory to save model checkpoints")
     parser.add_argument("--plot-path", type=str, default="/u/gkerex/projects/IdealSummary/data/plots/", help="Directory to save prediction plots (separate from checkpoints)")
+    parser.add_argument("--plot-every", type=int, default=1, help="Save pred-vs-true plots every N epochs (0 disables)")
     parser.add_argument("--use-smf", action="store_true", help="Compute SMF from SubhaloStellarMass and use fixed-size inputs")
     parser.add_argument("--smf-bins", type=int, default=13, help="Number of SMF bins for --use-smf")
     parser.add_argument("--smf-mass-range", type=float, nargs=2, default=[8.0, 12.0], help="Log10 mass range (min max) for SMF bins")
@@ -766,6 +767,10 @@ def main(argv=None):
     parser.add_argument("--multi-phi", action="store_true", help="Use DeepSetMultiPhi with multiple phi networks (set-based inputs)")
     parser.add_argument("--model-type", type=str, choices=["deepset", "mlp", "slotsetpool"], default="deepset",
                         help="Model type to construct: deepset (set-based), mlp (fixed-vector), or slotsetpool")
+    parser.add_argument("--mlp-structure", choices=["shallow", "intermediate", "deep"], default=None,
+                        help="Preset MLP widths for fixed-vector inputs; overridden by --mlp-hidden")
+    parser.add_argument("--mlp-hidden", type=int, nargs="+", default=None,
+                        help="Hidden sizes for MLP (fixed-vector inputs), e.g. --mlp-hidden 256 512 256")
     parser.add_argument("--slot-K", type=int, default=32, help="Number of learnable slots for SlotSetPool")
     parser.add_argument("--slot-H", type=int, default=128, help="Per-slot hidden dim (H) for SlotSetPool")
     parser.add_argument("--slot-dropout", type=float, default=0.0, help="Dropout for SlotSetPool MLPs")
@@ -1064,6 +1069,21 @@ def main(argv=None):
     if target_dim is None:
         target_dim = 1 if yb.ndim == 1 else int(yb.shape[1])
 
+    # Resolve MLP hidden sizes for fixed-vector inputs (e.g., SMF).
+    if args.mlp_hidden is not None:
+        mlp_hidden = [int(h) for h in args.mlp_hidden]
+    elif args.mlp_structure is not None:
+        if args.mlp_structure == "shallow":
+            mlp_hidden = [256, 256]
+        elif args.mlp_structure == "intermediate":
+            mlp_hidden = [256, 512, 256]
+        elif args.mlp_structure == "deep":
+            mlp_hidden = [256, 1024, 1024, 256]
+        else:
+            raise ValueError(f"Unknown mlp_structure: {args.mlp_structure}")
+    else:
+        mlp_hidden = [256, 1024, 1024, 256]
+
     # Build model according to requested type and input modality
     if use_mask:
         if args.model_type == "slotsetpool":
@@ -1078,7 +1098,7 @@ def main(argv=None):
             model = DeepSet(input_dim=input_dim, phi_hidden=[256,128,512], rho_hidden=[1024,1024,128], agg="mean", out_dim=target_dim)
     else:
         # fixed-vector inputs: always use MLP
-        model = MLP(in_dim=input_dim, hidden=[256, 1024, 1024, 256], out_dim=target_dim)
+        model = MLP(in_dim=input_dim, hidden=mlp_hidden, out_dim=target_dim)
 
     model_name = args.model_type if use_mask else 'MLP'
     print(f"Model: {model_name}, input_dim: {input_dim}, target_dim: {target_dim}")
@@ -1187,40 +1207,41 @@ def main(argv=None):
                 pass
             wandb.log(log_dict)
 
-        # produce 1:1 scatter plots for train and validation predictions
-        try:
-            os.makedirs(args.plot_path, exist_ok=True)
-            train_y_true, train_y_pred = collect_predictions(model, train_loader, device,
+        if args.plot_every > 0 and (ep % args.plot_every == 0):
+            # produce 1:1 scatter plots for train and validation predictions
+            try:
+                os.makedirs(args.plot_path, exist_ok=True)
+                train_y_true, train_y_pred = collect_predictions(model, train_loader, device,
+                                                                 input_norm=args.normalize_input, input_stats=input_stats,
+                                                                 output_norm=args.normalize_output, output_stats=output_stats,
+                                                                 predict_fn=predict_fn)
+                val_y_true, val_y_pred = collect_predictions(model, val_loader, device,
                                                              input_norm=args.normalize_input, input_stats=input_stats,
                                                              output_norm=args.normalize_output, output_stats=output_stats,
                                                              predict_fn=predict_fn)
-            val_y_true, val_y_pred = collect_predictions(model, val_loader, device,
-                                                         input_norm=args.normalize_input, input_stats=input_stats,
-                                                         output_norm=args.normalize_output, output_stats=output_stats,
-                                                         predict_fn=predict_fn)
 
-            train_plot_path = os.path.join(args.plot_path, f"pred_vs_true_train_ep{ep}.png")
-            val_plot_path = os.path.join(args.plot_path, f"pred_vs_true_val_ep{ep}.png")
-            plot_pred_vs_true(train_y_true, train_y_pred, train_plot_path, title=f"Train: pred vs true (ep {ep})")
-            plot_pred_vs_true(val_y_true, val_y_pred, val_plot_path, title=f"Val: pred vs true (ep {ep})")
-            # per-epoch test plot
-            if test_loader is not None:
-                try:
-                    test_y_true, test_y_pred = collect_predictions(model, test_loader, device,
-                                                                    input_norm=args.normalize_input, input_stats=input_stats,
-                                                                    output_norm=args.normalize_output, output_stats=output_stats,
-                                                                    predict_fn=predict_fn)
-                    test_plot_path = os.path.join(args.plot_path, f"pred_vs_true_test_ep{ep}.png")
-                    plot_pred_vs_true(test_y_true, test_y_pred, test_plot_path, title=f"Test: pred vs true (ep {ep})")
-                    if wandb is not None:
-                        wandb.log({f"pred_vs_true_test_ep{ep}": wandb.Image(test_plot_path)})
-                except Exception as e:
-                    print(f"Warning: failed to produce per-epoch test plot: {e}")
-            print(f"Saved pred-vs-true plots: {train_plot_path}, {val_plot_path}")
-            if wandb is not None:
-                wandb.log({"pred_vs_true_train": wandb.Image(train_plot_path), "pred_vs_true_val": wandb.Image(val_plot_path)})
-        except Exception as e:
-            print(f"Warning: failed to save pred-vs-true plots: {e}")
+                train_plot_path = os.path.join(args.plot_path, f"pred_vs_true_train_ep{ep}.png")
+                val_plot_path = os.path.join(args.plot_path, f"pred_vs_true_val_ep{ep}.png")
+                plot_pred_vs_true(train_y_true, train_y_pred, train_plot_path, title=f"Train: pred vs true (ep {ep})")
+                plot_pred_vs_true(val_y_true, val_y_pred, val_plot_path, title=f"Val: pred vs true (ep {ep})")
+                # per-epoch test plot
+                if test_loader is not None:
+                    try:
+                        test_y_true, test_y_pred = collect_predictions(model, test_loader, device,
+                                                                       input_norm=args.normalize_input, input_stats=input_stats,
+                                                                       output_norm=args.normalize_output, output_stats=output_stats,
+                                                                       predict_fn=predict_fn)
+                        test_plot_path = os.path.join(args.plot_path, f"pred_vs_true_test_ep{ep}.png")
+                        plot_pred_vs_true(test_y_true, test_y_pred, test_plot_path, title=f"Test: pred vs true (ep {ep})")
+                        if wandb is not None:
+                            wandb.log({f"pred_vs_true_test_ep{ep}": wandb.Image(test_plot_path)})
+                    except Exception as e:
+                        print(f"Warning: failed to produce per-epoch test plot: {e}")
+                print(f"Saved pred-vs-true plots: {train_plot_path}, {val_plot_path}")
+                if wandb is not None:
+                    wandb.log({"pred_vs_true_train": wandb.Image(train_plot_path), "pred_vs_true_val": wandb.Image(val_plot_path)})
+            except Exception as e:
+                print(f"Warning: failed to save pred-vs-true plots: {e}")
 
     # Final evaluation on held-out test set (if available)
     test_loss = None
@@ -1274,19 +1295,20 @@ def main(argv=None):
                         pass
             except Exception:
                 pass
-        try:
-            os.makedirs(args.plot_path, exist_ok=True)
-            test_y_true, test_y_pred = collect_predictions(model, test_loader, device,
-                                                           input_norm=args.normalize_input, input_stats=input_stats,
-                                                           output_norm=args.normalize_output, output_stats=output_stats,
-                                                           predict_fn=predict_fn)
-            test_plot_path = os.path.join(args.plot_path, "pred_vs_true_test_final.png")
-            plot_pred_vs_true(test_y_true, test_y_pred, test_plot_path, title="Test: pred vs true (final)")
-            print(f"Saved test pred-vs-true plot: {test_plot_path}")
-            if wandb is not None:
-                wandb.log({"pred_vs_true_test": wandb.Image(test_plot_path)})
-        except Exception as e:
-            print(f"Warning: failed to save test pred-vs-true plot: {e}")
+        if args.plot_every > 0:
+            try:
+                os.makedirs(args.plot_path, exist_ok=True)
+                test_y_true, test_y_pred = collect_predictions(model, test_loader, device,
+                                                               input_norm=args.normalize_input, input_stats=input_stats,
+                                                               output_norm=args.normalize_output, output_stats=output_stats,
+                                                               predict_fn=predict_fn)
+                test_plot_path = os.path.join(args.plot_path, "pred_vs_true_test_final.png")
+                plot_pred_vs_true(test_y_true, test_y_pred, test_plot_path, title="Test: pred vs true (final)")
+                print(f"Saved test pred-vs-true plot: {test_plot_path}")
+                if wandb is not None:
+                    wandb.log({"pred_vs_true_test": wandb.Image(test_plot_path)})
+            except Exception as e:
+                print(f"Warning: failed to save test pred-vs-true plot: {e}")
 
     # Save checkpoint locally and upload to WandB if requested
     if args.save_model:
