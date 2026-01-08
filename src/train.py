@@ -727,6 +727,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--epochs", type=int, default=15)
     parser.add_argument("--batch", type=int, default=32)
+    parser.add_argument("--num-workers", type=int, default=0,
+                        help="DataLoader workers (0 for single-process)")
+    parser.add_argument("--pin-memory", action="store_true",
+                        help="Pin CPU memory for faster H2D transfers")
+    parser.add_argument("--persistent-workers", action="store_true",
+                        help="Keep DataLoader workers alive between epochs")
+    parser.add_argument("--prefetch-factor", type=int, default=2,
+                        help="Batches prefetched per worker (requires num_workers > 0)")
     parser.add_argument("--train-frac", type=float, default=0.8, help="Fraction of data for training")
     parser.add_argument("--val-frac", type=float, default=0.1, help="Fraction of data for validation")
     parser.add_argument("--test-frac", type=float, default=0.1, help="Fraction of data for held-out testing")
@@ -784,6 +792,23 @@ def main(argv=None):
 
     # optional wandb init (deferred until after stats computed)
     wandb = None
+
+    if args.num_workers < 0:
+        raise ValueError("--num-workers must be >= 0")
+
+    loader_kwargs = {
+        "num_workers": args.num_workers,
+        "pin_memory": args.pin_memory,
+    }
+    if args.num_workers > 0:
+        loader_kwargs["persistent_workers"] = args.persistent_workers
+        loader_kwargs["prefetch_factor"] = args.prefetch_factor
+    else:
+        if args.persistent_workers:
+            print("Warning: --persistent-workers requires --num-workers > 0; disabling.")
+        if args.prefetch_factor != 2:
+            print("Warning: --prefetch-factor requires --num-workers > 0; ignoring.")
+        loader_kwargs["persistent_workers"] = False
 
     # Determine target_dim from param_keys (applies to both SMF and set modes)
     if args.param_keys is not None:
@@ -1020,6 +1045,7 @@ def main(argv=None):
                 batch_size=args.batch,
                 shuffle=False,
                 collate_fn=stats_collate,
+                **loader_kwargs,
             )
             stats = compute_stats_from_loader(stats_loader)
         else:
@@ -1042,9 +1068,9 @@ def main(argv=None):
             wandb.config.update({"y_min": output_stats["y_min"].tolist(), "y_max": output_stats["y_max"].tolist()})
 
     # Create data loaders
-    train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=True, collate_fn=collate_fn)
-    val_loader = DataLoader(val_ds, batch_size=args.batch, shuffle=False, collate_fn=collate_fn)
-    test_loader = DataLoader(test_ds, batch_size=args.batch, shuffle=False, collate_fn=collate_fn) if test_ds is not None else None
+    train_loader = DataLoader(train_ds, batch_size=args.batch, shuffle=True, collate_fn=collate_fn, **loader_kwargs)
+    val_loader = DataLoader(val_ds, batch_size=args.batch, shuffle=False, collate_fn=collate_fn, **loader_kwargs)
+    test_loader = DataLoader(test_ds, batch_size=args.batch, shuffle=False, collate_fn=collate_fn, **loader_kwargs) if test_ds is not None else None
 
     # Build model after inspecting a single batch from the training loader
     sample_batch = next(iter(train_loader))
