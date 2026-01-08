@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from deepset import DeepSet, MLP, DeepSetMultiPhi
 from setpooling import SlotSetPool
-from data import HDF5SetDataset, hdf5_collate, smf_collate
+from data import HDF5SetDataset, hdf5_collate
 import functools
 
 
@@ -30,6 +30,69 @@ def stellar_mass_function(masses, bins: int = 3, mass_range: Tuple[float, float]
     # number density per dex
     phi = hist / dM / (box_size ** 3)
     return phi, centers
+
+
+def apply_subhalo_mask_np(
+    masses: np.ndarray,
+    prob: float,
+    bias_low: float,
+    bias_high: float,
+    bias_strength: float,
+    keep_one: bool,
+) -> np.ndarray:
+    if prob <= 0 or masses.size == 0:
+        return masses
+    if masses.ndim != 1:
+        raise ValueError("SMF masking expects 1D masses per simulation")
+    m = np.where(masses > 0, masses, 1e-6).astype(np.float64, copy=False)
+    logm = np.log10(m)
+    prob_arr = np.full_like(logm, float(prob))
+    if bias_strength > 0 and bias_high > bias_low:
+        scaled = (logm - bias_low) / (bias_high - bias_low)
+        scaled = np.clip(scaled, 0.0, 1.0)
+        prob_arr = prob_arr * (1.0 + bias_strength * (1.0 - scaled))
+    prob_arr = np.clip(prob_arr, 0.0, 1.0)
+    keep = np.random.rand(masses.shape[0]) >= prob_arr
+    if keep_one and not keep.any() and masses.shape[0] > 0:
+        keep[np.argmax(masses)] = True
+    return masses[keep]
+
+
+def smf_collate_from_masses(
+    batch,
+    bins: int,
+    mass_range: Tuple[float, float],
+    box_size: float,
+    mask_prob: float = 0.0,
+    mask_bias_low: float = 8.0,
+    mask_bias_high: float = 11.0,
+    mask_bias_strength: float = 0.0,
+    mask_keep_one: bool = True,
+):
+    Xs = []
+    ys = []
+    for masses, y in batch:
+        masses = np.asarray(masses, dtype=np.float64)
+        if mask_prob > 0:
+            masses = apply_subhalo_mask_np(
+                masses,
+                prob=mask_prob,
+                bias_low=mask_bias_low,
+                bias_high=mask_bias_high,
+                bias_strength=mask_bias_strength,
+                keep_one=mask_keep_one,
+            )
+        phi, _ = stellar_mass_function(
+            masses,
+            bins=bins,
+            mass_range=mass_range,
+            box_size=box_size,
+        )
+        Xs.append(phi.astype(np.float32))
+        ys.append(np.array(y, dtype=np.float32))
+    X = np.stack(Xs, axis=0)
+    y_arr = np.stack(ys, axis=0)
+    return torch.from_numpy(X), torch.from_numpy(y_arr)
 
 
 def compute_and_save_smf(
@@ -80,11 +143,6 @@ class SMFOnTheFlyDataset(Dataset):
         mass_feature_idx=None,
         mass_feature_name=None,
         feature_names=None,
-        mask_prob: float = 0.0,
-        mask_bias_low: float = 8.0,
-        mask_bias_high: float = 11.0,
-        mask_bias_strength: float = 0.0,
-        mask_keep_one: bool = True,
     ):
         if isinstance(data_field, (list, tuple, np.ndarray)):
             if len(data_field) != 1:
@@ -94,11 +152,6 @@ class SMFOnTheFlyDataset(Dataset):
         self.bins = int(bins)
         self.mass_range = (float(mass_range[0]), float(mass_range[1]))
         self.box_size = float(box_size)
-        self.mask_prob = float(mask_prob) if mask_prob is not None else 0.0
-        self.mask_bias_low = float(mask_bias_low)
-        self.mask_bias_high = float(mask_bias_high)
-        self.mask_bias_strength = float(mask_bias_strength)
-        self.mask_keep_one = bool(mask_keep_one)
         if self.bins <= 0:
             raise ValueError("bins must be positive")
         if self.mass_range[0] >= self.mass_range[1]:
@@ -121,38 +174,12 @@ class SMFOnTheFlyDataset(Dataset):
         self.param_keys = self.base.param_keys
         self.seeds = getattr(self.base, "seeds", None)
 
-    def _apply_random_mask_np(self, masses: np.ndarray) -> np.ndarray:
-        if self.mask_prob <= 0 or masses.size == 0:
-            return masses
-        if masses.ndim != 1:
-            raise ValueError("SMF masking expects 1D masses per simulation")
-        m = np.where(masses > 0, masses, 1e-6).astype(np.float64, copy=False)
-        logm = np.log10(m)
-        prob = float(self.mask_prob)
-        if self.mask_bias_strength > 0 and self.mask_bias_high > self.mask_bias_low:
-            scaled = (logm - self.mask_bias_low) / (self.mask_bias_high - self.mask_bias_low)
-            scaled = np.clip(scaled, 0.0, 1.0)
-            prob = prob * (1.0 + self.mask_bias_strength * (1.0 - scaled))
-        prob = np.clip(prob, 0.0, 1.0)
-        keep = np.random.rand(masses.shape[0]) >= prob
-        if self.mask_keep_one and not keep.any() and masses.shape[0] > 0:
-            keep[np.argmax(masses)] = True
-        return masses[keep]
-
     def __len__(self):
         return len(self.base)
 
     def __getitem__(self, idx: int):
         masses, y = self.base[idx]
-        if self.mask_prob > 0:
-            masses = self._apply_random_mask_np(np.asarray(masses))
-        phi, _ = stellar_mass_function(
-            masses,
-            bins=self.bins,
-            mass_range=self.mass_range,
-            box_size=self.box_size,
-        )
-        return phi.astype(np.float32), y
+        return np.asarray(masses), y
 
 
 def compute_stats_from_dataset(dataset, sample_limit: int = 1000):
@@ -202,6 +229,47 @@ def compute_stats_from_dataset(dataset, sample_limit: int = 1000):
 
     # Ensure y_min/y_max are at least 1-D arrays so downstream code
     # can safely call `torch.from_numpy`.
+    y_min = np.atleast_1d(y_min)
+    y_max = np.atleast_1d(y_max)
+
+    return {"input_mean": mean, "input_std": std, "y_min": y_min, "y_max": y_max}
+
+
+def compute_stats_from_loader(loader):
+    sum_x = None
+    sum_x2 = None
+    count = 0
+    y_mins = []
+    y_maxs = []
+
+    for batch in loader:
+        if len(batch) == 2:
+            X, y = batch
+        else:
+            X, _, y = batch
+        X_np = np.array(X, dtype=np.float64)
+        lx = np.log1p(X_np)
+        s = lx.sum(axis=0)
+        s2 = (lx ** 2).sum(axis=0)
+        if sum_x is None:
+            sum_x = s
+            sum_x2 = s2
+        else:
+            sum_x += s
+            sum_x2 += s2
+        count += lx.shape[0]
+
+        y_arr = np.array(y, dtype=np.float64)
+        y_mins.append(np.min(y_arr, axis=0))
+        y_maxs.append(np.max(y_arr, axis=0))
+
+    mean = (sum_x / count).astype(np.float32)
+    var = (sum_x2 / count - mean.astype(np.float64) ** 2).clip(min=1e-12)
+    std = np.sqrt(var).astype(np.float32)
+
+    y_min = np.min(np.stack(y_mins, axis=0), axis=0).astype(np.float32)
+    y_max = np.max(np.stack(y_maxs, axis=0), axis=0).astype(np.float32)
+
     y_min = np.atleast_1d(y_min)
     y_max = np.atleast_1d(y_max)
 
@@ -751,11 +819,6 @@ def main(argv=None):
                 mass_feature_idx=args.mass_feature_idx,
                 mass_feature_name=args.mass_feature_name,
                 feature_names=args.feature_names,
-                mask_prob=args.mask_prob,
-                mask_bias_low=args.mask_bias_low,
-                mask_bias_high=args.mask_bias_high,
-                mask_bias_strength=args.mask_bias_strength,
-                mask_keep_one=not args.mask_allow_empty,
             )
         else:
             probe_ds = HDF5SetDataset(
@@ -804,34 +867,7 @@ def main(argv=None):
                 mass_feature_idx=args.mass_feature_idx,
                 mass_feature_name=args.mass_feature_name,
                 feature_names=args.feature_names,
-                mask_prob=args.mask_prob,
-                mask_bias_low=args.mask_bias_low,
-                mask_bias_high=args.mask_bias_high,
-                mask_bias_strength=args.mask_bias_strength,
-                mask_keep_one=not args.mask_allow_empty,
             )
-            if args.mask_prob > 0:
-                full_ds_eval = SMFOnTheFlyDataset(
-                    h5_path=args.h5_path,
-                    snap=args.snap,
-                    param_keys=args.param_keys,
-                    bins=args.smf_bins,
-                    mass_range=smf_mass_range,
-                    box_size=args.smf_box_size,
-                    data_field=data_field,
-                    mass_min=args.mass_min,
-                    mass_max=args.mass_max,
-                    mass_feature_idx=args.mass_feature_idx,
-                    mass_feature_name=args.mass_feature_name,
-                    feature_names=args.feature_names,
-                    mask_prob=0.0,
-                    mask_bias_low=args.mask_bias_low,
-                    mask_bias_high=args.mask_bias_high,
-                    mask_bias_strength=args.mask_bias_strength,
-                    mask_keep_one=not args.mask_allow_empty,
-                )
-            else:
-                full_ds_eval = full_ds
         else:
             full_ds = HDF5SetDataset(
                 h5_path=args.h5_path,
@@ -922,16 +958,10 @@ def main(argv=None):
         train_idx = indices[: train_size]
         val_idx = indices[train_size : train_size + val_size]
         test_idx = indices[train_size + val_size : train_size + val_size + test_size]
-        if args.use_smf and args.mask_prob > 0:
-            train_ds = Subset(full_ds, train_idx)
-            val_ds = Subset(full_ds_eval, val_idx)
-            test_ds = Subset(full_ds_eval, test_idx) if test_size > 0 else None
-            stats_ds = Subset(full_ds_eval, train_idx)
-        else:
-            train_ds = Subset(full_ds, train_idx)
-            val_ds = Subset(full_ds, val_idx)
-            test_ds = Subset(full_ds, test_idx) if test_size > 0 else None
-            stats_ds = train_ds
+        train_ds = Subset(full_ds, train_idx)
+        val_ds = Subset(full_ds, val_idx)
+        test_ds = Subset(full_ds, test_idx) if test_size > 0 else None
+        stats_ds = train_ds
         print(f"Split sizes -> train: {train_size}, val: {val_size}, test: {test_size}")
         
         # Get sample to determine dimensions
@@ -945,7 +975,17 @@ def main(argv=None):
         # The model is constructed after creating the DataLoader by
         # sampling a single batch to reliably infer input dimensions.
         if args.use_smf:
-            collate_fn = smf_collate
+            collate_fn = functools.partial(
+                smf_collate_from_masses,
+                bins=args.smf_bins,
+                mass_range=smf_mass_range,
+                box_size=args.smf_box_size,
+                mask_prob=args.mask_prob,
+                mask_bias_low=args.mask_bias_low,
+                mask_bias_high=args.mask_bias_high,
+                mask_bias_strength=args.mask_bias_strength,
+                mask_keep_one=not args.mask_allow_empty,
+            )
         else:
             # use a fixed max_size (dataset.max_size) for padding/truncation
             try:
@@ -958,7 +998,27 @@ def main(argv=None):
     input_stats = None
     output_stats = None
     if args.normalize_input != "none" or args.normalize_output != "none":
-        stats = compute_stats_from_dataset(stats_ds, sample_limit=args.stats_sample)
+        if args.use_smf:
+            stats_collate = functools.partial(
+                smf_collate_from_masses,
+                bins=args.smf_bins,
+                mass_range=smf_mass_range,
+                box_size=args.smf_box_size,
+                mask_prob=0.0,
+                mask_bias_low=args.mask_bias_low,
+                mask_bias_high=args.mask_bias_high,
+                mask_bias_strength=args.mask_bias_strength,
+                mask_keep_one=not args.mask_allow_empty,
+            )
+            stats_loader = DataLoader(
+                stats_ds,
+                batch_size=args.batch,
+                shuffle=False,
+                collate_fn=stats_collate,
+            )
+            stats = compute_stats_from_loader(stats_loader)
+        else:
+            stats = compute_stats_from_dataset(stats_ds, sample_limit=args.stats_sample)
         input_stats = {"input_mean": stats["input_mean"], "input_std": stats["input_std"]}
         output_stats = {"y_min": stats["y_min"], "y_max": stats["y_max"]}
 

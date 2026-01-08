@@ -23,8 +23,8 @@ which python3
 
 python ../src/train.py --use-hdf5 --use-smf --h5-path ../data/camels_LH.hdf5 --snap 90 \
 	   --normalize-input log --normalize-output minmax --save-model --epochs 1000 \
-		 --mask-prob 0.01 --mask-bias-strength 2.0 \
-		 --wandb --wandb-project deepset-reg3 --wandb-run-name smf_mask_test --save-model --wandb-save-model
+		 --mask-prob 0.10 --mask-bias-strength 2.0 \
+		 --wandb --wandb-project deepset-reg3 --wandb-run-name smf_mask_test_per_batch --save-model --wandb-save-model
 
 #Omega_m sigma_8 A_SN1 A_SN2 A_AGN1 A_AGN2  \
 
