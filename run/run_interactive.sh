@@ -17,8 +17,20 @@ which python3
 #	--param-keys Omega_m sigma_8 --normalize-input log_std --normalize-output minmax \
 #	--wandb --wandb-project deepset-reg --save-model --wandb-save-model --epochs 100
 
-python ../tools/analyze_wandb_grid.py --wandb-dir wandb --out-dir grid_analysis \
-	  --program train.py --project SB28_SMF_grid
+#python ../tools/analyze_wandb_grid.py --wandb-dir wandb --out-dir grid_analysis \
+#	  --program train.py --projects SB28_SMF_grid,SB28_SMF_grid_all
+
+
+
+#python ../tools/analyze_wandb_grid.py --best-per-param --wandb-dir wandb --out-dir grid_analysis
+
+
+#python ../tools/export_wandb_history.py --wandb-dir wandb --projects optuna_test_smf,optuna_test_deepset,optuna_test_slotsetpool,optuna_test_smf_sb28,optuna_test_slotsetpool_sb28 --overwrite
+
+python ../tools/analyze_wandb_grid.py --best-per-param --wandb-dir wandb --out-dir grid_analysis
+
+
+
 
 #python run_sanity_checks.py \
 #	--h5-path ../data/camels_LH.hdf5 --snap 90 --sim-ids 0 \

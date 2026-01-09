@@ -106,14 +106,266 @@ def _summary_val_r2(summary: Dict[str, Any]) -> Optional[float]:
     return None
 
 
-def _parse_epoch_series(output_log_path: str) -> List[Tuple[int, float]]:
-    if not os.path.exists(output_log_path):
+def _extract_per_param_val_r2(summary: Dict[str, Any]) -> Dict[str, float]:
+    out: Dict[str, float] = {}
+    for key, val in summary.items():
+        if key.startswith("val/r2/"):
+            label = key.split("/", 2)[2]
+            try:
+                out[label] = float(val)
+            except Exception:
+                continue
+    if out:
+        return out
+    for key, val in summary.items():
+        if key.startswith("val_r2_"):
+            label = key[len("val_r2_") :]
+            try:
+                out[label] = float(val)
+            except Exception:
+                continue
+    return out
+
+
+def _history_param_keys(history_path: str) -> List[str]:
+    keys = set()
+    try:
+        with open(history_path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                for key in row.keys():
+                    if key.startswith("val/r2/") or key.startswith("val_r2_"):
+                        keys.add(key)
+    except Exception:
+        return []
+    return sorted(keys)
+
+
+def _best_per_param_from_history(history_path: str) -> Dict[str, float]:
+    best: Dict[str, float] = {}
+    keys = _history_param_keys(history_path)
+    for key in keys:
+        series = _parse_epoch_series(history_path, metric_key=key)
+        best_epoch, best_val, _last_epoch, _last_val = _best_from_series(series)
+        if best_epoch is None or best_val is None:
+            continue
+        if key.startswith("val/r2/"):
+            label = key.split("/", 2)[2]
+        else:
+            label = key[len("val_r2_") :]
+        best[label] = float(best_val)
+    return best
+
+
+def _collect_best_per_param(
+    wandb_dir: str,
+    project_names: List[str],
+) -> Dict[str, Dict[str, float]]:
+    best: Dict[str, Dict[str, float]] = {}
+    history_used = 0
+    summary_used = 0
+    for entry in sorted(os.listdir(wandb_dir)):
+        if not entry.startswith("run-"):
+            continue
+        run_dir = os.path.join(wandb_dir, entry)
+        summary_path = os.path.join(run_dir, "files", "wandb-summary.json")
+        meta_path = os.path.join(run_dir, "files", "wandb-metadata.json")
+        history_candidates = [
+            os.path.join(run_dir, "files", "wandb-history.jsonl"),
+            os.path.join(run_dir, "files", "wandb-history.json"),
+            os.path.join(run_dir, "files", "history.jsonl"),
+        ]
+
+        summary = _load_json(summary_path)
+        meta = _load_json(meta_path)
+        if summary is None or meta is None:
+            continue
+
+        parsed_args = _parse_args_list(meta.get("args", []))
+        project = parsed_args.get("wandb_project")
+        if project not in project_names:
+            continue
+
+        per_param = {}
+        for history_path in history_candidates:
+            if os.path.exists(history_path):
+                per_param = _best_per_param_from_history(history_path)
+                if per_param:
+                    history_used += 1
+                    break
+        if not per_param:
+            per_param = _extract_per_param_val_r2(summary)
+            if per_param:
+                summary_used += 1
+        if not per_param:
+            continue
+        proj_best = best.setdefault(project, {})
+        for label, val in per_param.items():
+            prev = proj_best.get(label)
+            if prev is None or val > prev:
+                proj_best[label] = float(val)
+    if history_used or summary_used:
+        print(f"Best-per-param source: history={history_used}, summary_fallback={summary_used}")
+    return best
+
+
+def _ordered_param_labels(series_list: List[Dict[str, float]]) -> List[str]:
+    ordered: List[str] = []
+    seen = set()
+    for series in series_list:
+        for label in series.keys():
+            if label not in seen:
+                seen.add(label)
+                ordered.append(label)
+    return ordered
+
+
+def _plot_per_param_bars(
+    out_path: str,
+    title: str,
+    param_labels: List[str],
+    series: List[Tuple[str, List[float]]],
+    colors: Optional[Dict[str, str]] = None,
+) -> None:
+    n_models = max(1, len(series))
+    x = np.arange(len(param_labels))
+    width = 0.8 / n_models
+    fig_w = max(8.0, 0.45 * len(param_labels))
+    fig, ax = plt.subplots(figsize=(fig_w, 4.8))
+    for i, (label, values) in enumerate(series):
+        offset = -0.4 + (i + 0.5) * width
+        color = colors.get(label) if colors else None
+        ax.bar(x + offset, values, width, label=label, color=color)
+    ax.axhline(0.0, color="#333333", linewidth=0.8)
+    ax.set_xticks(x, param_labels, rotation=55, ha="right")
+    ax.set_ylabel("val_r2")
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(axis="y", alpha=0.2)
+    vals = [v for _label, values in series for v in values if not math.isnan(v)]
+    if vals:
+        vmin = min(vals)
+        vmax = max(vals)
+        pad = 0.05 * (vmax - vmin) if vmax != vmin else max(0.1, abs(vmax) * 0.1)
+        ax.set_ylim(vmin - pad, vmax + pad)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+def _best_per_param_plots(wandb_dir: str, out_dir: str) -> None:
+    lh_projects = [
+        ("optuna_test_smf", "smf"),
+        ("optuna_test_deepset", "deepset"),
+        ("optuna_test_slotsetpool", "slotsetpool"),
+    ]
+    sb28_projects = [
+        ("optuna_test_smf_sb28", "smf_sb28"),
+        ("optuna_test_slotsetpool_sb28", "slotsetpool_sb28"),
+    ]
+    model_colors = {
+        "smf": "#2ecc71",
+        "deepset": "#3498db",
+        "slotsetpool": "#9b59b6",
+        "smf_sb28": "#2ecc71",
+        "slotsetpool_sb28": "#9b59b6",
+    }
+    targets = [p for p, _ in lh_projects + sb28_projects]
+    best = _collect_best_per_param(wandb_dir, targets)
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    def _build_series(items: List[Tuple[str, str]]) -> Tuple[List[str], List[Tuple[str, List[float]]]]:
+        per_param_list = []
+        series: List[Tuple[str, List[float]]] = []
+        for project, model_label in items:
+            per_param = best.get(project)
+            if not per_param:
+                print(f"No per-parameter metrics for {project}")
+                continue
+            per_param_list.append(per_param)
+            series.append((model_label, []))
+        if not per_param_list:
+            return [], []
+        param_labels = _ordered_param_labels(per_param_list)
+        for idx, (model_label, _values) in enumerate(series):
+            per_param = best.get(items[idx][0], {})
+            values = [per_param.get(p, float("nan")) for p in param_labels]
+            series[idx] = (model_label, values)
+        return param_labels, series
+
+    lh_params, lh_series = _build_series(lh_projects)
+    if lh_params and lh_series:
+        out_path = os.path.join(out_dir, "best_per_param_LH.png")
+        _plot_per_param_bars(
+            out_path,
+            "Best per-parameter val_r2 by model (LH)",
+            lh_params,
+            lh_series,
+            colors=model_colors,
+        )
+        print(f"Wrote {out_path}")
+
+    sb_params, sb_series = _build_series(sb28_projects)
+    if sb_params and sb_series:
+        out_path = os.path.join(out_dir, "best_per_param_SB28.png")
+        _plot_per_param_bars(
+            out_path,
+            "Best per-parameter val_r2 by model (SB28)",
+            sb_params,
+            sb_series,
+            colors=model_colors,
+        )
+        print(f"Wrote {out_path}")
+
+
+def _parse_epoch_series(path: str, metric_key: Optional[str] = None) -> List[Tuple[int, float]]:
+    if not os.path.exists(path):
         return []
     series: List[Tuple[int, float]] = []
+    if metric_key is not None and (path.endswith(".jsonl") or path.endswith(".json")):
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                for idx, line in enumerate(f):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except Exception:
+                        continue
+                    if metric_key not in row:
+                        continue
+                    try:
+                        val = float(row[metric_key])
+                    except Exception:
+                        continue
+                    step = row.get("epoch")
+                    if step is None:
+                        step = row.get("global_step")
+                    if step is None:
+                        step = row.get("_step")
+                    if step is None:
+                        step = idx
+                    try:
+                        step_i = int(step)
+                    except Exception:
+                        step_i = idx
+                    series.append((step_i, val))
+        except Exception:
+            return []
+        return series
+
     epoch_re = re.compile(r"Epoch\s+(\d+).*?val_r2=([\-0-9.eE]+)")
     gen_re = re.compile(r"\[Gen\s+(\d+)\].*?val_r2=([\-0-9.eE]+)")
     try:
-        with open(output_log_path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
             for line in f:
                 m = epoch_re.search(line)
                 if m:
@@ -222,16 +474,46 @@ def _plot_heatmap(
     plt.close(fig)
 
 
+def _plot_best_vs_last(
+    out_path: str,
+    title: str,
+    param_labels: List[str],
+    best_vals: List[float],
+    last_vals: List[float],
+) -> None:
+    x = np.arange(len(param_labels))
+    width = 0.38
+    fig, ax = plt.subplots(figsize=(max(6.5, 0.5 * len(param_labels)), 4.5))
+    ax.bar(x - width / 2, best_vals, width, label="best_val_r2")
+    ax.bar(x + width / 2, last_vals, width, label="last_val_r2")
+    ax.set_xticks(x, param_labels, rotation=45, ha="right")
+    ax.set_ylabel("val_r2")
+    ax.set_title(title)
+    ax.legend()
+    ax.grid(axis="y", alpha=0.2)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--wandb-dir", type=str, default="wandb", help="Local wandb directory")
     parser.add_argument("--out-dir", type=str, default="run/grid_analysis", help="Output directory for reports/plots")
     parser.add_argument("--program", type=str, default="train.py", help="Filter runs by program basename")
-    parser.add_argument("--project", type=str, default=None, help="Filter by wandb project name (from args)")
+    parser.add_argument("--project", type=str, default=None, help="Filter by single wandb project name (from args)")
+    parser.add_argument("--projects", type=str, default=None,
+                        help="Comma-separated list of wandb project names to include")
+    parser.add_argument("--best-per-param", action="store_true",
+                        help="Plot per-parameter val_r2 bars for best runs in LH/SB28 optuna_test projects")
     parser.add_argument("--improve-epochs", type=int, default=3, help="Epoch window to mark 'still_improving'")
     parser.add_argument("--improve-eps", type=float, default=0.002, help="Tolerance from best val_r2 for improving")
     parser.add_argument("--overfit-drop", type=float, default=0.01, help="Drop from best val_r2 to flag overfit")
     args = parser.parse_args()
+
+    if args.best_per_param:
+        _best_per_param_plots(args.wandb_dir, args.out_dir)
+        return
 
     os.makedirs(args.out_dir, exist_ok=True)
 
@@ -253,7 +535,12 @@ def main() -> None:
             continue
 
         parsed_args = _parse_args_list(meta.get("args", []))
-        if args.project and parsed_args.get("wandb_project") != args.project:
+        project = parsed_args.get("wandb_project")
+        if args.projects:
+            allowed = {p.strip() for p in args.projects.split(",") if p.strip()}
+            if project not in allowed:
+                continue
+        elif args.project and project != args.project:
             continue
 
         output_log = os.path.join(run_dir, "files", "output.log")
@@ -312,8 +599,8 @@ def main() -> None:
     with open(summary_csv, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "param_label", "structure", "lr", "val_r2", "best_epoch",
-            "last_epoch", "last_val_r2", "target_epochs", "status",
+            "param_label", "structure", "lr", "val_r2_best", "best_epoch",
+            "last_epoch", "val_r2_last", "target_epochs", "status",
             "run_id", "wandb_project", "wandb_run_name",
         ])
         for run in sorted(runs, key=lambda r: (r["param_label"], -(r["val_r2"] or 0.0))):
@@ -352,8 +639,8 @@ def main() -> None:
         with open(rank_csv, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow([
-                "rank", "structure", "lr", "val_r2", "best_epoch",
-                "last_epoch", "last_val_r2", "target_epochs", "status", "run_id",
+                "rank", "structure", "lr", "val_r2_best", "best_epoch",
+                "last_epoch", "val_r2_last", "target_epochs", "status", "run_id",
             ])
             for idx, run in enumerate(ranking, start=1):
                 writer.writerow([
@@ -369,6 +656,21 @@ def main() -> None:
         _plot_heatmap(plot_path, f"val_r2 grid - {param_label}", structures, lrs, data)
 
         print(f"Wrote {rank_csv} and {plot_path}")
+
+    # Best vs last per parameter (including "all" if present)
+    param_labels = sorted(grouped.keys(), key=lambda k: (k != "all", k))
+    best_vals = []
+    last_vals = []
+    for label in param_labels:
+        entries = grouped[label]
+        best_run = max(entries, key=lambda r: r["val_r2"])
+        best_vals.append(float(best_run["val_r2"]))
+        last_vals.append(float(best_run["last_val_r2"]) if best_run["last_val_r2"] is not None else float("nan"))
+
+    if param_labels:
+        plot_path = os.path.join(args.out_dir, "best_vs_last_per_param.png")
+        _plot_best_vs_last(plot_path, "Best vs last val_r2 per parameter", param_labels, best_vals, last_vals)
+        print(f"Wrote {plot_path}")
 
     print(f"Summary written to {summary_csv}")
 
