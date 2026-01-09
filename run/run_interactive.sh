@@ -17,14 +17,26 @@ which python3
 #	--param-keys Omega_m sigma_8 --normalize-input log_std --normalize-output minmax \
 #	--wandb --wandb-project deepset-reg --save-model --wandb-save-model --epochs 100
 
+python ../tools/analyze_wandb_grid.py --wandb-dir wandb --out-dir grid_analysis \
+	  --program train.py --project SB28_SMF_grid
+
+#python run_sanity_checks.py \
+#	--h5-path ../data/camels_LH.hdf5 --snap 90 --sim-ids 0 \
+#	--smf-fields SubhaloStellarMass SubhaloGasMass \
+#	--smf-field SubhaloStellarMass \
+#	--cut-set "none" \
+#	--cut-set "SubhaloStellarMass:1e8:1e10" \
+#	--cut-set "SubhaloStellarMass:1e8:1e10;SubhaloGasMass:1e9:1e10" \
+#	--mask-prob 0.2 --mask-bias-strength 2.0 \
+#	--out-dir sanity_outputs
 
 
 #python ../src/diagnostics.py --h5-path ../data/camels_SB28.hdf5 --snap 90 --sample 500 --use-smf
 
-python ../src/train.py --use-hdf5 --use-smf --h5-path ../data/camels_LH.hdf5 --snap 90 \
-	   --normalize-input log --normalize-output minmax --save-model --epochs 1000 \
-		 --mask-prob 0.10 --mask-bias-strength 2.0 \
-		 --wandb --wandb-project deepset-reg3 --wandb-run-name smf_mask_test_per_batch --save-model --wandb-save-model
+#python ../src/train.py --use-hdf5 --use-smf --h5-path ../data/camels_LH.hdf5 --snap 90 \
+#	   --normalize-input log --normalize-output minmax --save-model --epochs 1000 \
+#		 --mask-prob 0.10 --mask-bias-strength 2.0 \
+#		 --wandb --wandb-project deepset-reg3 --wandb-run-name smf_mask_test_per_batch --save-model --wandb-save-model
 
 #Omega_m sigma_8 A_SN1 A_SN2 A_AGN1 A_AGN2  \
 

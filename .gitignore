@@ -65,6 +65,11 @@ wandb
 data/
 *.hdf5
 *.h5
+*.csv
+*.tsv
+*.npy
+*.npz
+*.db
 
 # Auxiliary run data and generated artifacts (keep source code only)
 run/data/
